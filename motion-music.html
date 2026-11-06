@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion Music</title>
+<style>
+  :root {
+    --bg: #101216; --panel: #1a1d23; --text: #e8eaed; --muted: #9aa0a6;
+    --accent: #4f8cff; --stop: #e5484d; --line: rgba(255,255,255,0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 16px;
+  }
+  h1 { font-size: 22px; margin: 4px 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 14px; text-align: center; }
+  .stage {
+    position: relative; width: 100%; max-width: 800px; aspect-ratio: 4 / 3;
+    background: #000; border-radius: 12px; overflow: hidden;
+  }
+  video, canvas.overlay {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; transform: scaleX(-1); /* mirror, like a mirror */
+  }
+  .placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); text-align: center; padding: 20px;
+  }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: center;
+    margin-top: 14px; width: 100%; max-width: 800px;
+    background: var(--panel); padding: 12px 16px; border-radius: 12px;
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 8px;
+    padding: 10px 20px; cursor: pointer; color: #fff;
+  }
+  #start { background: var(--accent); }
+  #stop { background: var(--stop); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  input[type=range] { width: 120px; }
+  select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+  #status { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 1.2em; }
+</style>
+</head>
+<body>
+  <h1>Motion Music</h1>
+  <p class="sub">Move in front of your webcam. Each part of the picture plays its own note.</p>
+
+  <div class="stage">
+    <div class="placeholder" id="placeholder">Press <b>&nbsp;Start&nbsp;</b> and allow camera access.</div>
+    <video id="video" playsinline muted></video>
+    <canvas class="overlay" id="overlay"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
+    <label>Sensitivity <input id="sens" type="range" min="1" max="100" value="60"></label>
+    <label>Grid
+      <select id="grid">
+        <option value="3x3">3 × 3</option>
+        <option value="4x3" selected>4 × 3</option>
+        <option value="6x4">6 × 4</option>
+      </select>
+    </label>
+    <label>Sound
+      <select id="wave">
+        <option value="sine">Soft</option>
+        <option value="triangle" selected>Mellow</option>
+        <option value="square">Retro</option>
+        <option value="sawtooth">Bright</option>
+      </select>
+    </label>
+  </div>
+  <div id="status"></div>
+
+<script>
+(() => {
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const octx = overlay.getContext('2d');
+  const startBtn = document.getElementById('start');
+  const stopBtn = document.getElementById('stop');
+  const sensEl = document.getElementById('sens');
+  const gridEl = document.getElementById('grid');
+  const waveEl = document.getElementById('wave');
+  const statusEl = document.getElementById('status');
+  const placeholder = document.getElementById('placeholder');
+
+  // Small offscreen canvas for cheap frame differencing
+  const W = 160, H = 120;
+  const work = document.createElement('canvas');
+  work.width = W; work.height = H;
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+
+  // Major pentatonic scale across several octaves — always sounds pleasant together
+  const PENTA = [0, 2, 4, 7, 9];
+  function noteFreq(i) {
+    const base = 48; // C3 (MIDI)
+    const midi = base + PENTA[i % 5] + 12 * Math.floor(i / 5);
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  let stream = null, audio = null, master = null, rafId = null;
+  let prev = null, cols = 4, rows = 3;
+  let lastPlayed = [], flash = [];
+  const COOLDOWN_MS = 250;
+
+  function parseGrid() {
+    const [c, r] = gridEl.value.split('x').map(Number);
+    cols = c; rows = r;
+    lastPlayed = new Array(cols * rows).fill(0);
+    flash = new Array(cols * rows).fill(0);
+  }
+  gridEl.addEventListener('change', parseGrid);
+  parseGrid();
+
+  function playNote(freq, strength) {
+    const t = audio.currentTime;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = waveEl.value;
+    osc.frequency.value = freq;
+    const peak = 0.15 + 0.25 * Math.min(1, strength);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+    osc.connect(gain).connect(master);
+    osc.start(t);
+    osc.stop(t + 0.85);
+  }
+
+  function loop() {
+    rafId = requestAnimationFrame(loop);
+    if (video.readyState < 2) return;
+
+    wctx.drawImage(video, 0, 0, W, H);
+    const cur = wctx.getImageData(0, 0, W, H).data;
+
+    // Sensitivity 1..100 -> per-pixel threshold and fraction of zone that must change
+    const s = Number(sensEl.value) / 100;
+    const pixThresh = 70 - 50 * s;        // 70 (low sens) .. 20 (high sens)
+    const zoneFrac = 0.12 - 0.11 * s;     // 12% .. 1% of zone pixels
+
+    const n = cols * rows;
+    const counts = new Array(n).fill(0);
+    const zw = W / cols, zh = H / rows;
+
+    if (prev) {
+      for (let y = 0; y < H; y += 2) {
+        const zy = Math.min(rows - 1, Math.floor(y / zh));
+        for (let x = 0; x < W; x += 2) {
+          const i = (y * W + x) * 4;
+          const d = Math.abs(cur[i] - prev[i]) + Math.abs(cur[i+1] - prev[i+1]) + Math.abs(cur[i+2] - prev[i+2]);
+          if (d / 3 > pixThresh) {
+            const zx = Math.min(cols - 1, Math.floor(x / zw));
+            counts[zy * cols + zx]++;
+          }
+        }
+      }
+    }
+    prev = cur;
+
+    const now = performance.now();
+    const pixelsPerZone = (zw * zh) / 4; // because we sample every 2nd pixel in each axis
+    for (let z = 0; z < n; z++) {
+      const frac = counts[z] / pixelsPerZone;
+      if (frac > zoneFrac && now - lastPlayed[z] > COOLDOWN_MS) {
+        lastPlayed[z] = now;
+        flash[z] = 1;
+        // Higher notes at the top of the frame, left-to-right as you see it (mirrored)
+        const row = rows - 1 - Math.floor(z / cols);
+        const col = cols - 1 - (z % cols); // mirror so your right hand = right side
+        playNote(noteFreq(row * cols + col), frac / (zoneFrac * 4));
+      }
+    }
+    draw();
+  }
+
+  function draw() {
+    const cw = overlay.clientWidth, ch = overlay.clientHeight;
+    if (overlay.width !== cw || overlay.height !== ch) { overlay.width = cw; overlay.height = ch; }
+    octx.clearRect(0, 0, cw, ch);
+    const zw = cw / cols, zh = ch / rows;
+    for (let z = 0; z < cols * rows; z++) {
+      const x = (z % cols) * zw, y = Math.floor(z / cols) * zh;
+      if (flash[z] > 0.02) {
+        const hue = (z * 360 / (cols * rows)) | 0;
+        octx.fillStyle = `hsla(${hue}, 90%, 60%, ${0.45 * flash[z]})`;
+        octx.fillRect(x, y, zw, zh);
+        flash[z] *= 0.88;
+      }
+      octx.strokeStyle = 'rgba(255,255,255,0.25)';
+      octx.lineWidth = 1;
+      octx.strokeRect(x + 0.5, y + 0.5, zw - 1, zh - 1);
+    }
+  }
+
+  async function start() {
+    startBtn.disabled = true;
+    statusEl.textContent = 'Requesting camera…';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    } catch (err) {
+      statusEl.textContent = 'Could not access the camera: ' + err.message;
+      startBtn.disabled = false;
+      return;
+    }
+    video.srcObject = stream;
+    await video.play();
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    await audio.resume();
+    master = audio.createGain();
+    master.gain.value = 0.6;
+    const comp = audio.createDynamicsCompressor();
+    master.connect(comp).connect(audio.destination);
+    prev = null;
+    placeholder.style.display = 'none';
+    stopBtn.disabled = false;
+    statusEl.textContent = 'Listening for movement…';
+    loop();
+  }
+
+  function stop() {
+    cancelAnimationFrame(rafId); rafId = null;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    video.srcObject = null;
+    if (master) { master.disconnect(); master = null; }
+    if (audio) audio.suspend();
+    prev = null;
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    placeholder.style.display = 'flex';
+    stopBtn.disabled = true;
+    startBtn.disabled = false;
+    statusEl.textContent = 'Stopped. Camera is off.';
+  }
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    startBtn.disabled = true;
+    statusEl.textContent = 'This browser does not support webcam access.';
+  }
+})();
+</script>
+</body>
+</html>
