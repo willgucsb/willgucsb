@@ -49,6 +49,12 @@
   #start { background: var(--accent); }
   #stop { background: var(--stop); }
   #flip { background: #3a3f48; }
+  button.small { background: #3a3f48; padding: 10px 16px; }
+  #mute.off { background: var(--stop); }
+  .controls.audio { margin-top: 8px; }
+  .astate { color: var(--muted); font-size: 13px; }
+  .astate.ok { color: #46c46e; }
+  .astate.bad { color: #f0a03c; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   label { display: flex; align-items: center; gap: 8px; color: var(--muted); min-height: 44px; }
   input[type=range] { width: 130px; height: 32px; }
@@ -93,6 +99,12 @@
       </select>
     </label>
   </div>
+  <div class="controls audio">
+    <button id="mute" class="small">🔊 Sound on</button>
+    <label>Volume <input id="vol" type="range" min="0" max="100" value="80"></label>
+    <button id="test" class="small">Test sound</button>
+    <span id="astate" class="astate">Sound: not started</span>
+  </div>
   <div id="status"></div>
 
 <script>
@@ -135,7 +147,78 @@
   video.addEventListener('loadedmetadata', sizeWork);
   video.addEventListener('resize', sizeWork); // fires when the phone rotates
 
+  // ---------- Audio ----------
+  const muteBtn = $('mute'), volEl = $('vol'), testBtn = $('test'), astate = $('astate');
+  let muted = false;
+
+  // A tiny silent WAV played through an <audio> element. On iPhone/iPad this moves the
+  // page into "media playback" mode, so Web Audio is not silenced by the ring/silent switch.
+  const silentEl = (() => {
+    const rate = 8000, n = rate / 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+    const el = document.createElement('audio');
+    el.src = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    el.loop = true; el.setAttribute('playsinline', '');
+    return el;
+  })();
+
+  function targetGain() { return muted ? 0 : Math.pow(Number(volEl.value) / 100, 2); }
+
+  // Must be called directly from a tap/click.
+  function ensureAudio() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    silentEl.play().catch(() => {});
+    if (!audio) {
+      audio = new (window.AudioContext || window.webkitAudioContext)();
+      master = audio.createGain();
+      const comp = audio.createDynamicsCompressor();
+      master.connect(comp).connect(audio.destination);
+      audio.onstatechange = updateAudioState;
+      // Prime the output with a one-sample silent buffer (older iOS needs this)
+      const b = audio.createBufferSource();
+      b.buffer = audio.createBuffer(1, 1, 22050);
+      b.connect(audio.destination); b.start(0);
+    }
+    master.gain.value = targetGain();
+    if (audio.state !== 'running') audio.resume().then(updateAudioState, updateAudioState);
+    updateAudioState();
+  }
+
+  function updateAudioState() {
+    if (!audio) { astate.textContent = 'Sound: not started'; astate.className = 'astate'; return; }
+    const st = audio.state;
+    if (st === 'running' && muted) { astate.textContent = 'Sound: muted'; astate.className = 'astate bad'; }
+    else if (st === 'running') { astate.textContent = 'Sound: on'; astate.className = 'astate ok'; }
+    else if (!stream) { astate.textContent = 'Sound: paused'; astate.className = 'astate'; }
+    else { astate.textContent = 'Sound: blocked, tap Test sound'; astate.className = 'astate bad'; }
+  }
+
+  muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? '🔇 Muted' : '🔊 Sound on';
+    muteBtn.classList.toggle('off', muted);
+    if (audio) master.gain.setTargetAtTime(targetGain(), audio.currentTime, 0.02);
+    updateAudioState();
+  });
+  volEl.addEventListener('input', () => {
+    if (audio) master.gain.setTargetAtTime(targetGain(), audio.currentTime, 0.02);
+  });
+  testBtn.addEventListener('click', () => {
+    ensureAudio();
+    if (muted) muteBtn.click(); // testing implies you want to hear it
+    audio.resume().then(() => [0, 2, 4].forEach((k, i) => setTimeout(() => playNote(noteFreq(5 + k), 1), i * 150)));
+  });
+  // iPad can pause audio when the app is backgrounded; bring it back on return
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && audio && stream) audio.resume().then(updateAudioState);
+  });
+
   function playNote(freq, strength) {
+    if (!audio || audio.state !== 'running') return;
     const t = audio.currentTime;
     const osc = audio.createOscillator(), gain = audio.createGain();
     osc.type = waveEl.value;
@@ -231,9 +314,8 @@
 
   async function start() {
     startBtn.disabled = true;
-    // Create/resume audio right inside the tap, before any await (needed on iPhone/iPad)
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    audio.resume();
+    // Start audio right inside the tap, before any await (needed on iPhone/iPad)
+    ensureAudio();
     statusEl.textContent = 'Requesting camera…';
     try {
       await openCamera();
@@ -242,9 +324,7 @@
       startBtn.disabled = false;
       return;
     }
-    master = audio.createGain();
-    master.gain.value = 0.6;
-    master.connect(audio.createDynamicsCompressor()).connect(audio.destination);
+    if (audio.state !== 'running') audio.resume().then(updateAudioState, updateAudioState);
     placeholder.style.display = 'none';
     stopBtn.disabled = false;
     statusEl.textContent = 'Listening for movement…';
@@ -257,8 +337,8 @@
     cancelAnimationFrame(rafId); rafId = null;
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; video.srcObject = null;
-    if (master) { master.disconnect(); master = null; }
-    if (audio) audio.suspend();
+    silentEl.pause();
+    if (audio) audio.suspend().then(updateAudioState);
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     prev = null;
     octx.clearRect(0, 0, overlay.width, overlay.height);
