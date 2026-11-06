@@ -2,64 +2,80 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#101216">
 <title>Motion Music</title>
 <style>
   :root {
     --bg: #101216; --panel: #1a1d23; --text: #e8eaed; --muted: #9aa0a6;
     --accent: #4f8cff; --stop: #e5484d; --line: rgba(255,255,255,0.12);
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    display: flex; flex-direction: column; align-items: center; padding: 16px;
+    display: flex; flex-direction: column; align-items: center;
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   }
-  h1 { font-size: 22px; margin: 4px 0 4px; }
-  p.sub { color: var(--muted); margin: 0 0 14px; text-align: center; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  p.sub { color: var(--muted); margin: 0 0 10px; text-align: center; font-size: 14px; }
   .stage {
-    position: relative; width: 100%; max-width: 800px; aspect-ratio: 4 / 3;
+    position: relative; width: 100%; max-width: 900px;
+    flex: 1 1 auto; min-height: 240px; max-height: 75vh;
     background: #000; border-radius: 12px; overflow: hidden;
+    touch-action: manipulation;
   }
   video, canvas.overlay {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; transform: scaleX(-1); /* mirror, like a mirror */
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
   }
+  .stage.mirror video, .stage.mirror canvas.overlay { transform: scaleX(-1); }
   .placeholder {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); text-align: center; padding: 20px;
   }
   .controls {
-    display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: center;
-    margin-top: 14px; width: 100%; max-width: 800px;
-    background: var(--panel); padding: 12px 16px; border-radius: 12px;
+    display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: center;
+    margin-top: 12px; width: 100%; max-width: 900px;
+    background: var(--panel); padding: 12px; border-radius: 12px;
   }
+  .buttons { display: flex; gap: 10px; }
   button {
-    font: inherit; font-weight: 600; border: 0; border-radius: 8px;
-    padding: 10px 20px; cursor: pointer; color: #fff;
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px;
+    padding: 12px 22px; min-height: 48px; cursor: pointer; color: #fff;
   }
   #start { background: var(--accent); }
   #stop { background: var(--stop); }
+  #flip { background: #3a3f48; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
-  input[type=range] { width: 120px; }
-  select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
-  #status { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 1.2em; }
+  label { display: flex; align-items: center; gap: 8px; color: var(--muted); min-height: 44px; }
+  input[type=range] { width: 130px; height: 32px; }
+  select {
+    font: inherit; font-size: 16px; /* 16px stops iOS zooming on focus */
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 40px;
+  }
+  #status { color: var(--muted); font-size: 13px; margin-top: 8px; min-height: 1.2em; text-align: center; }
 </style>
 </head>
 <body>
   <h1>Motion Music</h1>
-  <p class="sub">Move in front of your webcam. Each part of the picture plays its own note.</p>
+  <p class="sub">Move in front of the camera. Each part of the picture plays its own note.</p>
 
-  <div class="stage">
-    <div class="placeholder" id="placeholder">Press <b>&nbsp;Start&nbsp;</b> and allow camera access.</div>
-    <video id="video" playsinline muted></video>
+  <div class="stage mirror" id="stage">
+    <div class="placeholder" id="placeholder">Press&nbsp;<b>Start</b>&nbsp;and allow camera access.</div>
+    <video id="video" playsinline muted autoplay></video>
     <canvas class="overlay" id="overlay"></canvas>
   </div>
 
   <div class="controls">
-    <button id="start">Start</button>
-    <button id="stop" disabled>Stop</button>
+    <div class="buttons">
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+      <button id="flip" title="Switch between front and back camera">Flip camera</button>
+    </div>
     <label>Sensitivity <input id="sens" type="range" min="1" max="100" value="60"></label>
     <label>Grid
       <select id="grid">
@@ -81,49 +97,47 @@
 
 <script>
 (() => {
-  const video = document.getElementById('video');
-  const overlay = document.getElementById('overlay');
+  const $ = id => document.getElementById(id);
+  const video = $('video'), overlay = $('overlay'), stage = $('stage');
   const octx = overlay.getContext('2d');
-  const startBtn = document.getElementById('start');
-  const stopBtn = document.getElementById('stop');
-  const sensEl = document.getElementById('sens');
-  const gridEl = document.getElementById('grid');
-  const waveEl = document.getElementById('wave');
-  const statusEl = document.getElementById('status');
-  const placeholder = document.getElementById('placeholder');
+  const startBtn = $('start'), stopBtn = $('stop'), flipBtn = $('flip');
+  const sensEl = $('sens'), gridEl = $('grid'), waveEl = $('wave');
+  const statusEl = $('status'), placeholder = $('placeholder');
 
-  // Small offscreen canvas for cheap frame differencing
-  const W = 160, H = 120;
+  // Small offscreen canvas for cheap frame differencing (size follows camera aspect)
   const work = document.createElement('canvas');
-  work.width = W; work.height = H;
   const wctx = work.getContext('2d', { willReadFrequently: true });
+  let W = 160, H = 120;
 
-  // Major pentatonic scale across several octaves — always sounds pleasant together
+  // Major pentatonic scale across several octaves, so notes always sound good together
   const PENTA = [0, 2, 4, 7, 9];
-  function noteFreq(i) {
-    const base = 48; // C3 (MIDI)
-    const midi = base + PENTA[i % 5] + 12 * Math.floor(i / 5);
-    return 440 * Math.pow(2, (midi - 69) / 12);
-  }
+  const noteFreq = i => 440 * Math.pow(2, (48 + PENTA[i % 5] + 12 * Math.floor(i / 5) - 69) / 12);
 
-  let stream = null, audio = null, master = null, rafId = null;
-  let prev = null, cols = 4, rows = 3;
-  let lastPlayed = [], flash = [];
+  let stream = null, audio = null, master = null, rafId = null, wakeLock = null;
+  let facing = 'user'; // 'user' = front/selfie camera, 'environment' = back camera
+  let prev = null, cols = 4, rows = 3, lastPlayed = [], flash = [];
   const COOLDOWN_MS = 250;
 
   function parseGrid() {
-    const [c, r] = gridEl.value.split('x').map(Number);
-    cols = c; rows = r;
+    [cols, rows] = gridEl.value.split('x').map(Number);
     lastPlayed = new Array(cols * rows).fill(0);
     flash = new Array(cols * rows).fill(0);
   }
   gridEl.addEventListener('change', parseGrid);
   parseGrid();
 
+  function sizeWork() {
+    const vw = video.videoWidth || 4, vh = video.videoHeight || 3;
+    const scale = 160 / Math.max(vw, vh);
+    W = Math.max(40, Math.round(vw * scale)); H = Math.max(40, Math.round(vh * scale));
+    work.width = W; work.height = H; prev = null;
+  }
+  video.addEventListener('loadedmetadata', sizeWork);
+  video.addEventListener('resize', sizeWork); // fires when the phone rotates
+
   function playNote(freq, strength) {
     const t = audio.currentTime;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
+    const osc = audio.createOscillator(), gain = audio.createGain();
     osc.type = waveEl.value;
     osc.frequency.value = freq;
     const peak = 0.15 + 0.25 * Math.min(1, strength);
@@ -131,51 +145,43 @@
     gain.gain.exponentialRampToValueAtTime(peak, t + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
     osc.connect(gain).connect(master);
-    osc.start(t);
-    osc.stop(t + 0.85);
+    osc.start(t); osc.stop(t + 0.85);
   }
 
   function loop() {
     rafId = requestAnimationFrame(loop);
-    if (video.readyState < 2) return;
+    if (video.readyState < 2 || !video.videoWidth) return;
 
     wctx.drawImage(video, 0, 0, W, H);
     const cur = wctx.getImageData(0, 0, W, H).data;
 
-    // Sensitivity 1..100 -> per-pixel threshold and fraction of zone that must change
     const s = Number(sensEl.value) / 100;
-    const pixThresh = 70 - 50 * s;        // 70 (low sens) .. 20 (high sens)
-    const zoneFrac = 0.12 - 0.11 * s;     // 12% .. 1% of zone pixels
+    const pixThresh = 70 - 50 * s;     // per-pixel change needed
+    const zoneFrac = 0.12 - 0.11 * s;  // share of a zone that must change
 
-    const n = cols * rows;
-    const counts = new Array(n).fill(0);
+    const n = cols * rows, counts = new Array(n).fill(0);
     const zw = W / cols, zh = H / rows;
-
-    if (prev) {
+    if (prev && prev.length === cur.length) {
       for (let y = 0; y < H; y += 2) {
         const zy = Math.min(rows - 1, Math.floor(y / zh));
         for (let x = 0; x < W; x += 2) {
           const i = (y * W + x) * 4;
           const d = Math.abs(cur[i] - prev[i]) + Math.abs(cur[i+1] - prev[i+1]) + Math.abs(cur[i+2] - prev[i+2]);
-          if (d / 3 > pixThresh) {
-            const zx = Math.min(cols - 1, Math.floor(x / zw));
-            counts[zy * cols + zx]++;
-          }
+          if (d / 3 > pixThresh) counts[zy * cols + Math.min(cols - 1, Math.floor(x / zw))]++;
         }
       }
     }
     prev = cur;
 
-    const now = performance.now();
-    const pixelsPerZone = (zw * zh) / 4; // because we sample every 2nd pixel in each axis
+    const now = performance.now(), pixelsPerZone = (zw * zh) / 4;
+    const mirrored = facing === 'user';
     for (let z = 0; z < n; z++) {
       const frac = counts[z] / pixelsPerZone;
       if (frac > zoneFrac && now - lastPlayed[z] > COOLDOWN_MS) {
-        lastPlayed[z] = now;
-        flash[z] = 1;
-        // Higher notes at the top of the frame, left-to-right as you see it (mirrored)
+        lastPlayed[z] = now; flash[z] = 1;
+        // Higher notes toward the top, rising left-to-right as you see it on screen
         const row = rows - 1 - Math.floor(z / cols);
-        const col = cols - 1 - (z % cols); // mirror so your right hand = right side
+        const col = mirrored ? cols - 1 - (z % cols) : z % cols;
         playNote(noteFreq(row * cols + col), frac / (zoneFrac * 4));
       }
     }
@@ -183,15 +189,22 @@
   }
 
   function draw() {
+    const dpr = window.devicePixelRatio || 1;
     const cw = overlay.clientWidth, ch = overlay.clientHeight;
-    if (overlay.width !== cw || overlay.height !== ch) { overlay.width = cw; overlay.height = ch; }
+    if (overlay.width !== Math.round(cw * dpr) || overlay.height !== Math.round(ch * dpr)) {
+      overlay.width = Math.round(cw * dpr); overlay.height = Math.round(ch * dpr);
+    }
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
     octx.clearRect(0, 0, cw, ch);
-    const zw = cw / cols, zh = ch / rows;
+    // Where the video actually sits inside the stage (object-fit: contain)
+    const va = video.videoWidth / video.videoHeight, sa = cw / ch;
+    const vw = va > sa ? cw : ch * va, vh = va > sa ? cw / va : ch;
+    const ox = (cw - vw) / 2, oy = (ch - vh) / 2;
+    const zw = vw / cols, zh = vh / rows;
     for (let z = 0; z < cols * rows; z++) {
-      const x = (z % cols) * zw, y = Math.floor(z / cols) * zh;
+      const x = ox + (z % cols) * zw, y = oy + Math.floor(z / cols) * zh;
       if (flash[z] > 0.02) {
-        const hue = (z * 360 / (cols * rows)) | 0;
-        octx.fillStyle = `hsla(${hue}, 90%, 60%, ${0.45 * flash[z]})`;
+        octx.fillStyle = `hsla(${(z * 360 / (cols * rows)) | 0}, 90%, 60%, ${0.45 * flash[z]})`;
         octx.fillRect(x, y, zw, zh);
         flash[z] *= 0.88;
       }
@@ -201,52 +214,81 @@
     }
   }
 
+  async function openCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    stage.classList.toggle('mirror', facing === 'user');
+    sizeWork();
+  }
+
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+
   async function start() {
     startBtn.disabled = true;
+    // Create/resume audio right inside the tap, before any await (needed on iPhone/iPad)
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    audio.resume();
     statusEl.textContent = 'Requesting camera…';
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      await openCamera();
     } catch (err) {
-      statusEl.textContent = 'Could not access the camera: ' + err.message;
+      statusEl.textContent = 'Could not access the camera: ' + (err.message || err.name);
       startBtn.disabled = false;
       return;
     }
-    video.srcObject = stream;
-    await video.play();
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    await audio.resume();
     master = audio.createGain();
     master.gain.value = 0.6;
-    const comp = audio.createDynamicsCompressor();
-    master.connect(comp).connect(audio.destination);
-    prev = null;
+    master.connect(audio.createDynamicsCompressor()).connect(audio.destination);
     placeholder.style.display = 'none';
     stopBtn.disabled = false;
     statusEl.textContent = 'Listening for movement…';
+    keepAwake();
+    cancelAnimationFrame(rafId);
     loop();
   }
 
   function stop() {
     cancelAnimationFrame(rafId); rafId = null;
     if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    video.srcObject = null;
+    stream = null; video.srcObject = null;
     if (master) { master.disconnect(); master = null; }
     if (audio) audio.suspend();
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     prev = null;
     octx.clearRect(0, 0, overlay.width, overlay.height);
     placeholder.style.display = 'flex';
-    stopBtn.disabled = true;
-    startBtn.disabled = false;
+    stopBtn.disabled = true; startBtn.disabled = false;
     statusEl.textContent = 'Stopped. Camera is off.';
+  }
+
+  async function flip() {
+    facing = facing === 'user' ? 'environment' : 'user';
+    flipBtn.textContent = facing === 'user' ? 'Flip camera' : 'Flip camera (back)';
+    if (!stream) return; // will use the new camera on next Start
+    try { await openCamera(); }
+    catch (err) { statusEl.textContent = 'Could not switch camera: ' + (err.message || err.name); }
   }
 
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', stop);
+  flipBtn.addEventListener('click', flip);
+  // Re-acquire the wake lock when coming back to the tab
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && stream) keepAwake();
+  });
 
+  if (!window.isSecureContext) {
+    statusEl.textContent = 'Camera needs a secure (https://) page on phones and tablets.';
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     startBtn.disabled = true;
-    statusEl.textContent = 'This browser does not support webcam access.';
+    statusEl.textContent = 'Camera is not available here. On a phone or iPad, open this page from an https:// link.';
   }
 })();
 </script>
