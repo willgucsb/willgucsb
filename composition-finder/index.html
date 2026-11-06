@@ -14,6 +14,10 @@
     --accent: #c2410c;
     --accent-soft: #fdebe0;
     --track: #eeece6;
+    --water: #d9e4e8;
+    --land: #f4f2ec;
+    --land-hi: #fbd8c2;
+    --border-map: #b3ad9f;
     --radius: 14px;
   }
   @media (prefers-color-scheme: dark) {
@@ -26,6 +30,10 @@
       --accent: #fb8a4c;
       --accent-soft: #3a2316;
       --track: #2a2a30;
+      --water: #182127;
+      --land: #2c2c31;
+      --land-hi: #4d2f1e;
+      --border-map: #4c4c55;
     }
   }
   * { box-sizing: border-box; }
@@ -93,6 +101,29 @@
   .stat { background: var(--track); border-radius: 10px; padding: 8px 10px; }
   .stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 12px; color: var(--muted); }
+  .col { display: grid; gap: 20px; align-content: start; min-width: 0; }
+  .loc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; margin-bottom: 10px; }
+  .loc-head h3 { margin: 0; font-size: 16px; }
+  .loc-place { color: var(--muted); font-size: 14px; }
+  .loc-empty { color: var(--muted); font-size: 14px; margin: 0; }
+  .map { position: relative; height: 340px; border-radius: 10px; overflow: hidden; background: var(--water); touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .map.dragging { cursor: grabbing; }
+  .map canvas, .map-tiles { position: absolute; inset: 0; }
+  .map canvas { width: 100%; height: 100%; }
+  .map-tiles img { position: absolute; left: 0; top: 0; width: 256px; height: 256px; max-width: none; opacity: 0; transition: opacity .2s; }
+  .map-tiles img.on { opacity: 1; }
+  .map-pin { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+  .map-pin::before { content: ""; position: absolute; box-sizing: border-box; width: 24px; height: 24px; left: -12px; top: -29px; background: var(--accent); border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .map-pin::after { content: ""; position: absolute; width: 10px; height: 4px; left: -5px; top: -2px; border-radius: 50%; background: rgba(0,0,0,.3); }
+  .map-ctrl { position: absolute; right: 10px; top: 10px; display: grid; gap: 4px; }
+  .map-ctrl button { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 600 17px/1 system-ui, sans-serif; cursor: pointer; padding: 0; }
+  .map-ctrl button:disabled { opacity: .45; cursor: default; }
+  .map-attr { position: absolute; right: 0; bottom: 0; font-size: 11px; padding: 2px 6px; background: var(--panel); color: var(--muted); border-top-left-radius: 6px; opacity: .9; }
+  .map-attr a { color: inherit; }
+  .loc-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .btn { display: inline-block; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  button:focus-visible, a:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .note { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
   .busy { color: var(--muted); padding: 24px 0; text-align: center; }
   .error { color: #b91c1c; margin-top: 10px; }
@@ -101,7 +132,7 @@
 <body>
 <header>
   <h1>Composition Finder</h1>
-  <p>Upload a photo and the page will work out which classic composition model it follows most closely — rule of thirds, golden spiral, diagonals, symmetry, leading lines and more. Everything runs in your browser; the photo is never uploaded anywhere.</p>
+  <p>Upload a photo and the page will work out which classic composition model it follows most closely — rule of thirds, golden spiral, diagonals, symmetry, leading lines and more. The photo is analyzed in your browser and never uploaded. If it carries GPS data, the page also shows where it was taken on a map.</p>
 </header>
 
 <main>
@@ -113,6 +144,7 @@
   <div id="error" class="error" hidden></div>
 
   <section id="workspace" class="workspace">
+    <div class="col">
     <div class="card">
       <div class="stage">
         <div class="imgwrap">
@@ -129,6 +161,12 @@
       <div id="stats" class="stats"></div>
     </div>
 
+    <div class="card" id="locCard">
+      <div class="loc-head"><h3>Where it was taken</h3><span id="locPlace" class="loc-place"></span></div>
+      <div id="locBody"><p class="loc-empty">Reading location data…</p></div>
+    </div>
+    </div>
+
     <div class="card">
       <div id="verdict" class="verdict"><div class="busy">Analyzing…</div></div>
       <div class="section-title">All models</div>
@@ -138,6 +176,7 @@
   </section>
 </main>
 
+<script src="world-50m.js"></script>
 <script>
 (() => {
 'use strict';
@@ -889,6 +928,270 @@ function heatCanvas(R) {
   return c;
 }
 
+
+/* ---------------- photo location: EXIF GPS ---------------- */
+
+function readExif(buf) {
+  const dv = new DataView(buf), n = dv.byteLength;
+  const str4 = o => o + 4 <= n ? String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1), dv.getUint8(o + 2), dv.getUint8(o + 3)) : '';
+  let tiff = -1;
+  if (n > 4 && dv.getUint16(0) === 0xFFD8) {                       // JPEG: APP1 "Exif\0\0"
+    let o = 2;
+    while (o + 10 < n && dv.getUint8(o) === 0xFF) {
+      const mk = dv.getUint8(o + 1);
+      if (mk === 0xFF) { o++; continue; }
+      if (mk === 0x01 || (mk >= 0xD0 && mk <= 0xD8)) { o += 2; continue; }
+      if (mk === 0xDA || mk === 0xD9) break;
+      const len = dv.getUint16(o + 2);
+      if (mk === 0xE1 && str4(o + 4) === 'Exif' && dv.getUint16(o + 8) === 0) { tiff = o + 10; break; }
+      o += 2 + len;
+    }
+  } else if (n > 8 && dv.getUint32(0) === 0x89504E47) {            // PNG: eXIf chunk
+    let o = 8;
+    while (o + 8 <= n) {
+      const len = dv.getUint32(o), type = str4(o + 4);
+      if (type === 'eXIf') { tiff = o + 8; break; }
+      if (type === 'IEND') break;
+      o += 12 + len;
+    }
+  } else if (str4(0) === 'RIFF' && str4(8) === 'WEBP') {            // WebP: EXIF chunk
+    let o = 12;
+    while (o + 8 <= n) {
+      const type = str4(o), len = dv.getUint32(o + 4, true);
+      if (type === 'EXIF') { tiff = o + 8; if (str4(tiff) === 'Exif') tiff += 6; break; }
+      o += 8 + len + (len & 1);
+    }
+  }
+  if (tiff < 0 || tiff + 8 > n) return null;
+  const le = dv.getUint16(tiff) === 0x4949;
+  const U16 = o => dv.getUint16(o, le), U32 = o => dv.getUint32(o, le);
+  const SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+  const ifd = off => {
+    const tags = {}, p = tiff + off;
+    if (!off || p + 2 > n) return tags;
+    const count = U16(p);
+    for (let i = 0; i < count; i++) {
+      const e = p + 2 + i * 12; if (e + 12 > n) break;
+      const type = U16(e + 2), cnt = U32(e + 4), size = (SIZE[type] || 1) * cnt;
+      const vo = size <= 4 ? e + 8 : tiff + U32(e + 8);
+      if (vo + size <= n) tags[U16(e)] = { type, cnt, vo };
+    }
+    return tags;
+  };
+  const val = t => {
+    if (!t) return undefined;
+    const { type, cnt, vo } = t;
+    if (type === 2) {
+      let s = '';
+      for (let i = 0; i < cnt; i++) { const c = dv.getUint8(vo + i); if (!c) break; s += String.fromCharCode(c); }
+      return s.trim();
+    }
+    const out = [];
+    for (let i = 0; i < Math.min(cnt, 16); i++) {
+      if (type === 1 || type === 7) out.push(dv.getUint8(vo + i));
+      else if (type === 3) out.push(U16(vo + 2 * i));
+      else if (type === 4) out.push(U32(vo + 4 * i));
+      else if (type === 9) out.push(dv.getInt32(vo + 4 * i, le));
+      else if (type === 5) out.push(U32(vo + 8 * i) / U32(vo + 8 * i + 4));
+      else if (type === 10) out.push(dv.getInt32(vo + 8 * i, le) / dv.getInt32(vo + 8 * i + 4, le));
+    }
+    return out;
+  };
+  const ifd0 = ifd(U32(tiff + 4));
+  const info = { make: val(ifd0[0x010F]), model: val(ifd0[0x0110]) };
+  if (ifd0[0x8769]) { const ex = ifd(val(ifd0[0x8769])[0]); info.taken = val(ex[0x9003]) || val(ex[0x9004]); }
+  if (!info.taken) info.taken = val(ifd0[0x0132]);
+  if (ifd0[0x8825]) {
+    const g = ifd(val(ifd0[0x8825])[0]);
+    const dms = a => a && a.length ? a[0] + (a[1] || 0) / 60 + (a[2] || 0) / 3600 : NaN;
+    let lat = dms(val(g[2])), lon = dms(val(g[4]));
+    if (/^S/i.test(val(g[1]) || '')) lat = -lat;
+    if (/^W/i.test(val(g[3]) || '')) lon = -lon;
+    if (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(lat === 0 && lon === 0)) {
+      info.lat = lat; info.lon = lon;
+      const alt = val(g[6]);
+      if (alt && isFinite(alt[0])) info.alt = ((val(g[5]) || [0])[0] === 1 ? -1 : 1) * alt[0];
+    }
+  }
+  return info;
+}
+
+/* ---------------- map: Web Mercator, OSM tiles with a vector fallback ---------------- */
+
+const TILE = 256, MAXLAT = 85.05112878;
+function unit(lat, lon) {
+  const la = clamp(lat, -MAXLAT, MAXLAT) * Math.PI / 180;
+  return [(lon + 180) / 360, (1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2];
+}
+
+let WORLD = null;
+function world() {
+  if (WORLD || !window.WORLD_TOPO) return WORLD;
+  const topo = window.WORLD_TOPO, [sx, sy] = topo.transform.scale, [tx, ty] = topo.transform.translate;
+  const arcs = topo.arcs.map(a => { let x = 0, y = 0; return a.map(([dx, dy]) => { x += dx; y += dy; return unit(y * sy + ty, x * sx + tx); }); });
+  const ring = idx => {
+    const pts = [];
+    for (const i of idx) {
+      const a = i >= 0 ? arcs[i] : arcs[~i].slice().reverse();
+      for (let k = pts.length ? 1 : 0; k < a.length; k++) pts.push(a[k]);
+    }
+    const f = new Float64Array(pts.length * 2);
+    pts.forEach((p, k) => { f[2 * k] = p[0]; f[2 * k + 1] = p[1]; });
+    return f;
+  };
+  WORLD = [];
+  for (const g of topo.objects.countries.geometries) {
+    const polys = g.type === 'Polygon' ? [g.arcs] : g.type === 'MultiPolygon' ? g.arcs : [];
+    for (const p of polys) {
+      const rings = p.map(ring);
+      let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+      for (const r of rings) for (let k = 0; k < r.length; k += 2) {
+        x0 = Math.min(x0, r[k]); x1 = Math.max(x1, r[k]); y0 = Math.min(y0, r[k + 1]); y1 = Math.max(y1, r[k + 1]);
+      }
+      WORLD.push({ name: g.properties && g.properties.name, rings, bbox: [x0, y0, x1, y1] });
+    }
+  }
+  return WORLD;
+}
+function countryAt(lat, lon) {
+  const [x, y] = unit(lat, lon);
+  for (const c of world() || []) {
+    const [x0, y0, x1, y1] = c.bbox;
+    if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+    let inside = false;
+    for (const r of c.rings) for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
+      const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return c.name;
+  }
+  return null;
+}
+
+function drawVector(cv, w, h, ox, oy, ws, highlight) {
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const st = getComputedStyle(document.documentElement), tok = k => st.getPropertyValue(k).trim();
+  ctx.fillStyle = tok('--water'); ctx.fillRect(0, 0, w, h);
+  const W = world(); if (!W) return;
+  const paths = { land: new Path2D(), hi: new Path2D() };
+  for (const k of [-1, 0, 1]) {
+    const off = k * ws - ox;
+    for (const c of W) {
+      const [x0, y0, x1, y1] = c.bbox;
+      if (x0 * ws + off > w || x1 * ws + off < 0 || y0 * ws - oy > h || y1 * ws - oy < 0) continue;
+      const path = c.name === highlight ? paths.hi : paths.land;
+      for (const r of c.rings) {
+        path.moveTo(r[0] * ws + off, r[1] * ws - oy);
+        for (let i = 2; i < r.length; i += 2) path.lineTo(r[i] * ws + off, r[i + 1] * ws - oy);
+        path.closePath();
+      }
+    }
+  }
+  ctx.lineWidth = 0.8; ctx.strokeStyle = tok('--border-map');
+  ctx.fillStyle = tok('--land'); ctx.fill(paths.land); ctx.stroke(paths.land);
+  ctx.fillStyle = tok('--land-hi'); ctx.fill(paths.hi); ctx.stroke(paths.hi);
+}
+
+function createMap(el, lat, lon, country) {
+  el.innerHTML = `<canvas></canvas><div class="map-tiles"></div><div class="map-pin"></div>
+    <div class="map-ctrl"><button type="button" data-act="in" aria-label="Zoom in">+</button><button type="button" data-act="out" aria-label="Zoom out">−</button><button type="button" data-act="center" aria-label="Center on the photo location">◎</button></div>
+    <div class="map-attr"></div>`;
+  const cv = el.querySelector('canvas'), tilesEl = el.querySelector('.map-tiles'), pin = el.querySelector('.map-pin'), attr = el.querySelector('.map-attr');
+  const home = unit(lat, lon);
+  let tilesOk = true, loadedAny = false, z = 14;
+  let c = [home[0] * TILE * 2 ** z, home[1] * TILE * 2 ** z];
+  const tiles = new Map();
+  const maxZ = () => tilesOk ? 18 : 8;
+  const setAttr = () => {
+    attr.innerHTML = tilesOk ? 'Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+                             : 'Street map can’t load here · borders: Natural Earth';
+  };
+  function fallback() {
+    tilesOk = false; tilesEl.innerHTML = ''; tiles.clear();
+    const nz = Math.min(z, 5), f = 2 ** (nz - z); c = [c[0] * f, c[1] * f]; z = nz;
+    setAttr(); render();
+  }
+  function render() {
+    const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return;
+    const n = 2 ** z, ws = TILE * n;
+    c[0] = ((c[0] % ws) + ws) % ws; c[1] = clamp(c[1], 0, ws);
+    const ox = c[0] - w / 2, oy = c[1] - h / 2;
+    drawVector(cv, w, h, ox, oy, ws, country);
+    if (tilesOk) {
+      const want = new Set();
+      for (let ty = Math.floor(oy / TILE); ty <= Math.floor((oy + h) / TILE); ty++) {
+        if (ty < 0 || ty >= n) continue;
+        for (let tx = Math.floor(ox / TILE); tx <= Math.floor((ox + w) / TILE); tx++) {
+          const key = z + '/' + tx + '/' + ty; want.add(key);
+          let img = tiles.get(key);
+          if (!img) {
+            img = new Image(); img.alt = ''; img.draggable = false;
+            img.onload = () => { loadedAny = true; img.classList.add('on'); };
+            img.onerror = () => { if (!loadedAny && tilesOk) fallback(); };
+            img.src = `https://tile.openstreetmap.org/${z}/${((tx % n) + n) % n}/${ty}.png`;
+            tiles.set(key, img); tilesEl.appendChild(img);
+          }
+          img.style.transform = `translate(${tx * TILE - ox}px, ${ty * TILE - oy}px)`;
+        }
+      }
+      for (const [k, img] of tiles) if (!want.has(k)) { img.remove(); tiles.delete(k); }
+    }
+    let px = home[0] * ws - ox; px -= Math.round((px - w / 2) / ws) * ws;
+    pin.style.transform = `translate(${px}px, ${home[1] * ws - oy}px)`;
+    el.querySelector('[data-act="in"]').disabled = z >= maxZ();
+    el.querySelector('[data-act="out"]').disabled = z <= 1;
+  }
+  function zoomTo(nz, ax, ay) {
+    const w = el.clientWidth, h = el.clientHeight;
+    if (ax === undefined) { ax = w / 2; ay = h / 2; }
+    nz = clamp(nz, 1, maxZ()); if (nz === z) return;
+    const f = 2 ** (nz - z), wx = c[0] - w / 2 + ax, wy = c[1] - h / 2 + ay;
+    c = [wx * f - ax + w / 2, wy * f - ay + h / 2]; z = nz; render();
+  }
+  el.querySelector('.map-ctrl').addEventListener('click', e => {
+    const act = e.target.closest('button')?.dataset.act;
+    if (act === 'in') zoomTo(z + 1);
+    else if (act === 'out') zoomTo(z - 1);
+    else if (act === 'center') { c = [home[0] * TILE * 2 ** z, home[1] * TILE * 2 ** z]; render(); }
+  });
+  let drag = null;
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('button, a')) return;
+    drag = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); el.classList.add('dragging');
+  });
+  el.addEventListener('pointermove', e => {
+    if (!drag) return;
+    c[0] -= e.clientX - drag.x; c[1] -= e.clientY - drag.y; drag = { x: e.clientX, y: e.clientY }; render();
+  });
+  const end = () => { drag = null; el.classList.remove('dragging'); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  let wheelAcc = 0;
+  el.addEventListener('wheel', e => {
+    e.preventDefault(); wheelAcc += e.deltaY;
+    if (Math.abs(wheelAcc) < 40) return;
+    const r = el.getBoundingClientRect();
+    zoomTo(z + (wheelAcc < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top); wheelAcc = 0;
+  }, { passive: false });
+  el.addEventListener('dblclick', e => { const r = el.getBoundingClientRect(); zoomTo(z + 1, e.clientX - r.left, e.clientY - r.top); });
+  const ro = new ResizeObserver(render); ro.observe(el);
+  setAttr(); render();
+  return { destroy() { ro.disconnect(); tiles.clear(); } };
+}
+
+async function placeName(lat, lon) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&lat=${lat}&lon=${lon}`, { signal: ctl.signal });
+    if (!r.ok) return null;
+    const j = await r.json(), a = j.address || {};
+    const parts = [a.city || a.town || a.village || a.hamlet || a.suburb || a.county, a.state, a.country].filter(Boolean);
+    return [...new Set(parts)].join(', ') || null;
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
 /* ---------------- UI ---------------- */
 
 const $ = id => document.getElementById(id);
@@ -963,10 +1266,69 @@ function showResults(R) {
   $('stats').innerHTML = stats.map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join('');
 }
 
+
+let mapView = null, locToken = 0;
+const fmtCoord = (v, pos, neg) => `${Math.abs(v).toFixed(5)}° ${v >= 0 ? pos : neg}`;
+function fmtTaken(s) {
+  const m = /^(\d{4}):(\d\d):(\d\d)[ T](\d\d):(\d\d)/.exec(s || '');
+  if (!m) return s || null;
+  const d = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
+  return isNaN(d) ? s : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+function showLocation(info, token) {
+  if (token !== locToken) return;
+  if (mapView) { mapView.destroy(); mapView = null; }
+  const body = $('locBody'), place = $('locPlace');
+  place.textContent = '';
+  const camera = info && [info.make, info.model].filter(Boolean).join(' ').replace(/^(\S+) \1 /i, '$1 ');
+  const taken = info && fmtTaken(info.taken);
+  const extras = [[taken, 'Taken'], [camera, 'Camera']].filter(x => x[0]);
+  const statHtml = list => list.map(() => '<div class="stat"><b></b><span></span></div>').join('');
+  const fillStats = (wrap, list) => wrap.querySelectorAll('.stat').forEach((el, i) => { el.querySelector('b').textContent = list[i][0]; el.querySelector('span').textContent = list[i][1]; });
+
+  if (!info || info.lat === undefined) {
+    body.innerHTML = `<p class="loc-empty"></p>${extras.length ? `<div class="stats">${statHtml(extras)}</div>` : ''}`;
+    body.querySelector('.loc-empty').textContent = info
+      ? 'This photo has no GPS location in its metadata.'
+      : 'This photo has no metadata, so its location is unknown.';
+    body.querySelector('.loc-empty').textContent += ' Phones and social apps often remove location when sharing. On an iPhone, tap Options in the share sheet and turn on Location; or upload the original file from the camera.';
+    if (extras.length) fillStats(body, extras);
+    return;
+  }
+  const { lat, lon } = info;
+  const country = countryAt(lat, lon);
+  place.textContent = country || '';
+  const stats = [[`${fmtCoord(lat, 'N', 'S')}, ${fmtCoord(lon, 'E', 'W')}`, 'Coordinates']];
+  if (info.alt !== undefined) stats.push([`${Math.round(info.alt)} m`, 'Altitude']);
+  stats.push(...extras);
+  const q = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+  body.innerHTML = `<div class="map" id="map"></div><div class="stats">${statHtml(stats)}</div>
+    <div class="loc-links">
+      <button type="button" class="btn" id="copyCoords">Copy coordinates</button>
+      <a class="btn" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}">Open in OpenStreetMap</a>
+      <a class="btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">Open in Google Maps</a>
+    </div>`;
+  fillStats(body, stats);
+  $('copyCoords').addEventListener('click', e => {
+    const btn = e.currentTarget;
+    const done = ok => { btn.textContent = ok ? 'Copied' : q; setTimeout(() => { btn.textContent = 'Copy coordinates'; }, 1800); };
+    try { navigator.clipboard.writeText(q).then(() => done(true), () => done(false)); } catch { done(false); }
+  });
+  mapView = createMap($('map'), lat, lon, country);
+  placeName(lat, lon).then(name => { if (name && token === locToken) place.textContent = name; });
+}
+
 function loadFile(file) {
   $('error').hidden = true;
   if (!file || !file.type.startsWith('image/')) { showError('That file doesn’t look like an image.'); return; }
   const url = URL.createObjectURL(file);
+  const token = ++locToken;
+  $('locPlace').textContent = '';
+  $('locBody').innerHTML = '<p class="loc-empty">Reading location data…</p>';
+  file.arrayBuffer().then(readExif).catch(() => null).then(info => {
+    // wait until the workspace is visible so the map can measure itself
+    requestAnimationFrame(() => showLocation(info, token));
+  });
   const img = new Image();
   img.onload = () => {
     if (photo.dataset.url) URL.revokeObjectURL(photo.dataset.url);
