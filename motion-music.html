@@ -92,8 +92,9 @@
     </label>
     <label>Sound
       <select id="wave">
+        <option value="clarinet" selected>Clarinet</option>
         <option value="sine">Soft</option>
-        <option value="triangle" selected>Mellow</option>
+        <option value="triangle">Mellow</option>
         <option value="square">Retro</option>
         <option value="sawtooth">Bright</option>
       </select>
@@ -123,7 +124,13 @@
 
   // Major pentatonic scale across several octaves, so notes always sound good together
   const PENTA = [0, 2, 4, 7, 9];
-  const noteFreq = i => 440 * Math.pow(2, (48 + PENTA[i % 5] + 12 * Math.floor(i / 5) - 69) / 12);
+  // Clarinet stays in its natural range (D3 up to about D6) by wrapping after three octaves
+  const noteFreq = i => {
+    const clar = waveEl.value === 'clarinet';
+    if (clar) i = i % 15;
+    const midi = (clar ? 50 : 48) + PENTA[i % 5] + 12 * Math.floor(i / 5);
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  };
 
   let stream = null, audio = null, master = null, rafId = null, wakeLock = null;
   let facing = 'user'; // 'user' = front/selfie camera, 'environment' = back camera
@@ -219,6 +226,7 @@
 
   function playNote(freq, strength) {
     if (!audio || audio.state !== 'running') return;
+    if (waveEl.value === 'clarinet') return playClarinet(freq, strength);
     const t = audio.currentTime;
     const osc = audio.createOscillator(), gain = audio.createGain();
     osc.type = waveEl.value;
@@ -229,6 +237,70 @@
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
     osc.connect(gain).connect(master);
     osc.start(t); osc.stop(t + 0.85);
+  }
+
+  // ---------- Clarinet ----------
+  // A clarinet's tone is mostly odd harmonics (1st, 3rd, 5th...), giving its hollow, woody
+  // sound. We build that waveform once, soften it with a filter that opens as the note is
+  // "blown", add a puff of breath noise at the start and a gentle vibrato.
+  let clarWave = null, breathBuf = null;
+  function clarinetParts() {
+    if (clarWave) return;
+    const amps = [0, 1, 0.05, 0.75, 0.04, 0.5, 0.03, 0.33, 0.02, 0.2, 0.015, 0.12, 0.01, 0.07, 0.005, 0.04];
+    const real = new Float32Array(amps.length), imag = new Float32Array(amps);
+    clarWave = audio.createPeriodicWave(real, imag);
+    breathBuf = audio.createBuffer(1, audio.sampleRate * 0.5, audio.sampleRate);
+    const d = breathBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+
+  function playClarinet(freq, strength) {
+    clarinetParts();
+    const t = audio.currentTime, dur = 0.9;
+    const loud = 0.12 + 0.18 * Math.min(1, strength);
+
+    const osc = audio.createOscillator();
+    osc.setPeriodicWave(clarWave);
+    osc.frequency.value = freq;
+
+    // Vibrato that fades in after the attack
+    const lfo = audio.createOscillator(), lfoGain = audio.createGain();
+    lfo.frequency.value = 5;
+    lfoGain.gain.setValueAtTime(0, t);
+    lfoGain.gain.linearRampToValueAtTime(freq * 0.004, t + 0.35);
+    lfo.connect(lfoGain).connect(osc.frequency);
+
+    // Tone gets brighter as the reed starts vibrating, then mellows
+    const filt = audio.createBiquadFilter();
+    filt.type = 'lowpass'; filt.Q.value = 0.8;
+    const bright = Math.min(6000, freq * (6 + 6 * strength));
+    filt.frequency.setValueAtTime(freq * 2, t);
+    filt.frequency.exponentialRampToValueAtTime(bright, t + 0.06);
+    filt.frequency.exponentialRampToValueAtTime(Math.max(freq * 3, bright * 0.6), t + dur);
+
+    // Breath-like envelope: soft swell, sustain, smooth release
+    const env = audio.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(loud, t + 0.05);
+    env.gain.setValueAtTime(loud, t + 0.05);
+    env.gain.linearRampToValueAtTime(loud * 0.8, t + dur - 0.25);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+    osc.connect(filt).connect(env).connect(master);
+
+    // Short puff of air at the start of the note
+    const noise = audio.createBufferSource(); noise.buffer = breathBuf;
+    const nf = audio.createBiquadFilter(); nf.type = 'bandpass';
+    nf.frequency.value = Math.min(5000, freq * 4); nf.Q.value = 1.2;
+    const ng = audio.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(loud * 0.25, t + 0.02);
+    ng.gain.exponentialRampToValueAtTime(loud * 0.03, t + 0.12);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    noise.connect(nf).connect(ng).connect(master);
+
+    osc.start(t); lfo.start(t); noise.start(t);
+    osc.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05); noise.stop(t + dur + 0.05);
   }
 
   function loop() {
