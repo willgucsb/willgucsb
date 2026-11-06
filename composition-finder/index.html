@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composition Finder</title>
+<style>
+  :root {
+    --bg: #f5f4f0;
+    --panel: #ffffff;
+    --ink: #1c1c1e;
+    --muted: #6c6c72;
+    --line: #e2e0da;
+    --accent: #c2410c;
+    --accent-soft: #fdebe0;
+    --track: #eeece6;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131315;
+      --panel: #1c1c20;
+      --ink: #ececef;
+      --muted: #9a9aa3;
+      --line: #2d2d33;
+      --accent: #fb8a4c;
+      --accent-soft: #3a2316;
+      --track: #2a2a30;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { max-width: 1180px; margin: 0 auto; padding: 32px 16px 8px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 680px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    padding: 48px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  .drop span { color: var(--muted); }
+  .drop.compact { padding: 14px 16px; }
+  .drop.compact strong { display: inline; font-size: 15px; margin: 0 6px 0 0; }
+
+  .workspace { display: none; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 20px; margin-top: 16px; }
+  .workspace.show { display: grid; }
+  @media (max-width: 860px) { .workspace { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .stage { display: flex; justify-content: center; align-items: center; background: #0b0b0c; border-radius: 10px; overflow: hidden; }
+  .imgwrap { position: relative; display: inline-block; line-height: 0; }
+  .imgwrap img { display: block; max-width: 100%; max-height: 72vh; }
+  .imgwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; color: var(--muted); font-size: 14px; }
+  .toggles label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+  .verdict .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--muted); font-weight: 600; }
+  .verdict h2 { margin: 2px 0 6px; font-size: 24px; letter-spacing: -0.01em; }
+  .verdict .conf { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+  .verdict p { margin: 8px 0 0; }
+  .verdict .why { color: var(--muted); font-size: 14px; }
+
+  .ranking { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 4px; }
+  .ranking li button {
+    width: 100%; text-align: left; background: transparent; border: 1px solid transparent; color: inherit;
+    border-radius: 10px; padding: 8px 10px; cursor: pointer; font: inherit;
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center;
+  }
+  .ranking li button:hover { background: var(--track); }
+  .ranking li button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .ranking .name { font-weight: 600; font-size: 14px; }
+  .ranking .pct { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .ranking .bar { grid-column: 1 / -1; height: 6px; background: var(--track); border-radius: 99px; overflow: hidden; }
+  .ranking .bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+  .ranking .ev { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); }
+
+  .section-title { font-size: 13px; font-weight: 600; margin: 18px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 12px; }
+  .stat { background: var(--track); border-radius: 10px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
+  .busy { color: var(--muted); padding: 24px 0; text-align: center; }
+  .error { color: #b91c1c; margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Composition Finder</h1>
+  <p>Upload a photo and the page will work out which classic composition model it follows most closely — rule of thirds, golden spiral, diagonals, symmetry, leading lines and more. Everything runs in your browser; the photo is never uploaded anywhere.</p>
+</header>
+
+<main>
+  <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose a photo">
+    <strong>Drop a photo here, or click to choose one</strong>
+    <span>JPG, PNG, WebP or GIF · you can also paste an image</span>
+    <input id="file" type="file" accept="image/*" hidden>
+  </div>
+  <div id="error" class="error" hidden></div>
+
+  <section id="workspace" class="workspace">
+    <div class="card">
+      <div class="stage">
+        <div class="imgwrap">
+          <img id="photo" alt="Uploaded photo">
+          <canvas id="overlay"></canvas>
+        </div>
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="tGuide" checked> Composition guide</label>
+        <label><input type="checkbox" id="tSubject" checked> Main subject</label>
+        <label><input type="checkbox" id="tLines"> All detected lines</label>
+        <label><input type="checkbox" id="tHeat"> Saliency heatmap</label>
+      </div>
+      <div id="stats" class="stats"></div>
+    </div>
+
+    <div class="card">
+      <div id="verdict" class="verdict"><div class="busy">Analyzing…</div></div>
+      <div class="section-title">All models</div>
+      <ol id="ranking" class="ranking"></ol>
+      <p class="note">Scores come from image analysis heuristics (where the eye-catching subject sits, the straight lines in the frame, edge flow and mirror symmetry). Click any model to overlay its guide on your photo. Many strong photos combine more than one model, so the runners-up are worth a look too.</p>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+'use strict';
+
+const PHI = (1 + Math.sqrt(5)) / 2;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const pct = v => Math.round(v * 100) + '%';
+const gauss = (d2, s) => Math.exp(-d2 / (2 * s * s));
+// Linear up to 0.7, then eases toward 1 so raw scores above 1 keep their order.
+const soft = x => x <= 0.7 ? Math.max(0, x) : 0.7 + 0.3 * (1 - Math.exp(-(x - 0.7) / 0.3));
+
+const MODELS = {
+  thirds:     { name: 'Rule of Thirds', desc: 'The frame is split into a 3×3 grid and the subject or main lines sit on the grid lines or their four intersections (the “power points”).' },
+  phi:        { name: 'Golden Ratio (Phi Grid)', desc: 'Like the rule of thirds, but the grid lines fall at 0.382 and 0.618 of the frame, pulling key elements slightly closer to the middle.' },
+  spiral:     { name: 'Golden Spiral', desc: 'A Fibonacci spiral sweeps the eye from the open side of the frame inward, curling into the subject at the spiral’s eye.' },
+  center:     { name: 'Central / Bullseye', desc: 'The subject is placed dead centre, giving the picture a direct, stable and often formal feel.' },
+  symmetry:   { name: 'Symmetry', desc: 'The two halves of the frame mirror each other across a central axis — left/right, or top/bottom for reflections.' },
+  diagonal:   { name: 'Diagonal Lines', desc: 'Strong lines run across the frame at an angle, adding energy and movement and leading the eye corner to corner.' },
+  leading:    { name: 'Leading Lines / Vanishing Point', desc: 'Several lines converge toward one point, pulling the viewer into the depth of the scene.' },
+  horizontal: { name: 'Horizontal Lines / Horizon', desc: 'Long horizontal lines such as a horizon dominate, giving a calm, wide and stable structure.' },
+  vertical:   { name: 'Vertical Lines', desc: 'Strong vertical elements (trees, columns, buildings) dominate, conveying height, strength and rhythm.' },
+  triangle:   { name: 'Triangular', desc: 'Two converging oblique lines form a triangle or pyramid, a solid shape that feels grounded and directs attention to its apex.' },
+  negative:   { name: 'Negative Space / Minimalist', desc: 'A small subject is surrounded by large, quiet, uncluttered areas that give it room to breathe.' },
+};
+
+/* ---------------- image processing helpers ---------------- */
+
+function blurPass(s, d, W, H, r, horizontal) {
+  const norm = 1 / (2 * r + 1);
+  if (horizontal) {
+    for (let y = 0; y < H; y++) {
+      const o = y * W; let acc = 0;
+      for (let i = -r; i <= r; i++) acc += s[o + Math.min(W - 1, Math.max(0, i))];
+      for (let x = 0; x < W; x++) {
+        d[o + x] = acc * norm;
+        acc += s[o + Math.min(W - 1, x + r + 1)] - s[o + Math.max(0, x - r)];
+      }
+    }
+  } else {
+    for (let x = 0; x < W; x++) {
+      let acc = 0;
+      for (let i = -r; i <= r; i++) acc += s[Math.min(H - 1, Math.max(0, i)) * W + x];
+      for (let y = 0; y < H; y++) {
+        d[y * W + x] = acc * norm;
+        acc += s[Math.min(H - 1, y + r + 1) * W + x] - s[Math.max(0, y - r) * W + x];
+      }
+    }
+  }
+}
+// Three box passes ≈ Gaussian blur.
+function blur(src, W, H, r) {
+  r = Math.max(1, Math.round(r));
+  const a = Float32Array.from(src), b = new Float32Array(W * H);
+  for (let p = 0; p < 3; p++) { blurPass(a, b, W, H, r, true); blurPass(b, a, W, H, r, false); }
+  return a;
+}
+function percentile(arr, p, step = 3) {
+  const s = [];
+  for (let i = 0; i < arr.length; i += step) s.push(arr[i]);
+  s.sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(p * s.length))] || 0;
+}
+function normalize(arr, p = 0.995) {
+  const top = percentile(arr, p) || 1e-6;
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i++) out[i] = Math.min(1, arr[i] / top);
+  return out;
+}
+
+const LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+const fLab = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+
+/* ---------------- main analysis ---------------- */
+
+function analyze(source) {
+  const sw = source.naturalWidth || source.width, sh = source.naturalHeight || source.height;
+  const MAX = 400;
+  const sc = Math.min(1, MAX / Math.max(sw, sh));
+  const W = Math.max(32, Math.round(sw * sc)), H = Math.max(32, Math.round(sh * sc));
+  const N = W * H, minDim = Math.min(W, H), maxDim = Math.max(W, H), diag = Math.hypot(W, H);
+
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(source, 0, 0, W, H);
+  const px = cx.getImageData(0, 0, W, H).data;
+
+  // --- CIE Lab ---
+  const Lc = new Float32Array(N), Ac = new Float32Array(N), Bc = new Float32Array(N);
+  let mL = 0, mA = 0, mB = 0;
+  for (let i = 0, j = 0; i < N; i++, j += 4) {
+    const r = LIN[px[j]], g = LIN[px[j + 1]], b = LIN[px[j + 2]];
+    const fx = fLab((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+    const fy = fLab(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const fz = fLab((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+    Lc[i] = 116 * fy - 16; Ac[i] = 500 * (fx - fy); Bc[i] = 200 * (fy - fz);
+    mL += Lc[i]; mA += Ac[i]; mB += Bc[i];
+  }
+  mL /= N; mA /= N; mB /= N;
+  const gray = new Float32Array(N);
+  for (let i = 0; i < N; i++) gray[i] = Lc[i] / 100;
+
+  // --- gradients (Sobel on lightly blurred gray) ---
+  const gb = blur(gray, W, H, 1);
+  const gx = new Float32Array(N), gy = new Float32Array(N), mag = new Float32Array(N);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    const a = (gb[i - W + 1] + 2 * gb[i + 1] + gb[i + W + 1]) - (gb[i - W - 1] + 2 * gb[i - 1] + gb[i + W - 1]);
+    const b = (gb[i + W - 1] + 2 * gb[i + W] + gb[i + W + 1]) - (gb[i - W - 1] + 2 * gb[i - W] + gb[i - W + 1]);
+    gx[i] = a / 4; gy[i] = b / 4; mag[i] = Math.hypot(gx[i], gy[i]);
+  }
+  const EDGE_T = 0.05;
+
+  // --- saliency: global colour rarity + centre/surround contrast + detail density ---
+  const r1 = Math.max(1, minDim * 0.008), rBig = minDim * 0.12;
+  const Lb = blur(Lc, W, H, r1), Ab = blur(Ac, W, H, r1), Bb = blur(Bc, W, H, r1);
+  const Lg = blur(Lc, W, H, rBig), Ag = blur(Ac, W, H, rBig), Bg = blur(Bc, W, H, rBig);
+  const ft = new Float32Array(N), cs = new Float32Array(N), em = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    let d0 = Lb[i] - mL, d1 = Ab[i] - mA, d2 = Bb[i] - mB;
+    ft[i] = Math.sqrt(d0 * d0 + d1 * d1 + d2 * d2);
+    d0 = Lb[i] - Lg[i]; d1 = Ab[i] - Ag[i]; d2 = Bb[i] - Bg[i];
+    cs[i] = Math.sqrt(d0 * d0 + d1 * d1 + d2 * d2);
+    em[i] = mag[i] > EDGE_T ? mag[i] : 0;
+  }
+  const ed = blur(em, W, H, minDim * 0.04);
+  const nft = normalize(ft), ncs = normalize(cs), ned = normalize(ed);
+  let sal = new Float32Array(N);
+  const border = Math.max(2, minDim * 0.04);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    const bf = clamp(Math.min(x, y, W - 1 - x, H - 1 - y) / border);
+    sal[i] = (0.4 * nft[i] + 0.3 * ncs[i] + 0.3 * ned[i]) * bf;
+  }
+  sal = normalize(blur(sal, W, H, minDim * 0.015), 0.999);
+
+  // --- main subject & secondary peaks ---
+  const S2 = normalize(blur(sal, W, H, minDim * 0.05), 1);
+  let meanS2 = 0; for (let i = 0; i < N; i++) meanS2 += S2[i]; meanS2 /= N;
+  const peaks = [];
+  const suppressed = new Uint8Array(N);
+  for (let k = 0; k < 3; k++) {
+    let best = -1, bv = -1;
+    for (let i = 0; i < N; i++) if (!suppressed[i] && S2[i] > bv) { bv = S2[i]; best = i; }
+    if (best < 0 || (peaks.length && bv < 0.5 * peaks[0].v)) break;
+    const bx = best % W, by = (best / W) | 0;
+    // refine to a saliency-weighted centroid around the peak
+    const R = maxDim * 0.1; let sw = 0, sx = 0, sy = 0;
+    for (let y = Math.max(0, Math.floor(by - R)); y < Math.min(H, by + R); y++)
+      for (let x = Math.max(0, Math.floor(bx - R)); x < Math.min(W, bx + R); x++) {
+        if ((x - bx) ** 2 + (y - by) ** 2 > R * R) continue;
+        const w = sal[y * W + x] ** 2; sw += w; sx += w * x; sy += w * y;
+      }
+    const ux = sw ? sx / sw : bx, uy = sw ? sy / sw : by;
+    peaks.push({ x: (ux + 0.5) / W, y: (uy + 0.5) / H, v: bv, rel: peaks.length ? bv / peaks[0].v : 1 });
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const dx = (x - bx) / W, dy = (y - by) / H;
+      if (dx * dx + dy * dy < 0.2 * 0.2) suppressed[y * W + x] = 1;
+    }
+  }
+  const subject = peaks[0];
+  const prom = 0.55 + 0.45 * clamp((1 / Math.max(meanS2, 1e-3) - 1.6) / 2.5);
+
+  // subject area & bounding box
+  let area = 0; const xs = [], ys = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (sal[y * W + x] > 0.45) { area++; xs.push(x); ys.push(y); }
+  area /= N;
+  xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+  const q = (arr, p) => arr.length ? arr[Math.floor(p * (arr.length - 1))] : 0;
+  const bbox = xs.length ? { x0: q(xs, .04) / W, x1: (q(xs, .96) + 1) / W, y0: q(ys, .04) / H, y1: (q(ys, .96) + 1) / H }
+                         : { x0: subject.x - .05, x1: subject.x + .05, y0: subject.y - .05, y1: subject.y + .05 };
+
+  // weights for saliency-mass measures (sub-sampled)
+  const wm = []; let wsum = 0;
+  for (let y = 1; y < H; y += 2) for (let x = 1; x < W; x += 2) {
+    const w = sal[y * W + x] ** 2; wm.push([(x + .5) / W, (y + .5) / H, w]); wsum += w;
+  }
+  function massLift(pts, sigma) {
+    let m = 0, base = 0;
+    for (const [u, v, w] of wm) {
+      let g = 0;
+      for (const [a, b] of pts) g = Math.max(g, gauss((u - a) ** 2 + (v - b) ** 2, sigma));
+      m += w * g; base += g;
+    }
+    m /= (wsum || 1); base /= wm.length;
+    return clamp((m - base) / Math.max(0.05, 0.55 - base));
+  }
+  function nearest(pts, p) {
+    let best = null, bd = Infinity;
+    for (const pt of pts) { const d = Math.hypot(p.x - pt[0], p.y - pt[1]); if (d < bd) { bd = d; best = pt; } }
+    return { pt: best, d: bd };
+  }
+  function placement(pts, sigma) {
+    let s = gauss(nearest(pts, subject).d ** 2, sigma);
+    let hits = s > 0.6 ? 1 : 0;
+    for (const p of peaks.slice(1)) {
+      const g = gauss(nearest(pts, p).d ** 2, sigma);
+      s = Math.max(s, 0.75 * p.rel * g);
+      if (g > 0.6 && p.rel > 0.7) hits++;
+    }
+    if (hits >= 2) s += 0.12;
+    return clamp(s) * prom;
+  }
+
+  // --- edge orientation histogram ---
+  let hW = 0, vW = 0, dW = 0, totW = 0, edgeCount = 0;
+  for (let i = 0; i < N; i++) {
+    const m = mag[i]; if (m <= EDGE_T) continue;
+    edgeCount++;
+    let a = (Math.atan2(gy[i], gx[i]) * 180 / Math.PI + 90 + 360) % 180; // edge direction, 0 = horizontal
+    totW += m;
+    if (a < 10 || a > 170) hW += m;
+    else if (a > 80 && a < 100) vW += m;
+    else if ((a > 30 && a < 60) || (a > 120 && a < 150)) dW += m;
+  }
+  const hFrac = totW ? hW / totW : 0, vFrac = totW ? vW / totW : 0, dFrac = totW ? dW / totW : 0;
+  const edgeDensity = edgeCount / N;
+
+  // --- thin edges (non-max suppression) for line detection ---
+  const nms = new Float32Array(N); const cand = [];
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x, m = mag[i]; if (m < 0.02) continue;
+    const a = (Math.atan2(gy[i], gx[i]) * 180 / Math.PI + 180) % 180;
+    let n1, n2;
+    if (a < 22.5 || a >= 157.5) { n1 = i - 1; n2 = i + 1; }
+    else if (a < 67.5) { n1 = i - W - 1; n2 = i + W + 1; }
+    else if (a < 112.5) { n1 = i - W; n2 = i + W; }
+    else { n1 = i - W + 1; n2 = i + W - 1; }
+    if (m >= mag[n1] && m >= mag[n2]) { nms[i] = m; cand.push(m); }
+  }
+  cand.sort((a, b) => b - a);
+  const thinT = Math.max(0.035, cand[Math.min(cand.length - 1, Math.floor(0.05 * N))] || 0);
+  const ex = [], ey = [], eth = [];
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    if (nms[i] >= thinT) { ex.push(x); ey.push(y); eth.push(Math.round((Math.atan2(gy[i], gx[i]) * 180 / Math.PI + 360) % 180)); }
+  }
+
+  // --- Hough transform (votes restricted near each edge's gradient direction) ---
+  const nT = 180, rStep = 2, nR = Math.ceil(2 * diag / rStep) + 2;
+  const COS = new Float32Array(nT), SIN = new Float32Array(nT);
+  for (let t = 0; t < nT; t++) { COS[t] = Math.cos(t * Math.PI / 180); SIN[t] = Math.sin(t * Math.PI / 180); }
+  const acc = new Uint16Array(nT * nR);
+  for (let k = 0; k < ex.length; k++) {
+    const x = ex[k], y = ey[k], t0 = eth[k];
+    for (let dt = -12; dt <= 12; dt++) {
+      const t = (t0 + dt + 180) % 180;
+      const ri = Math.round((x * COS[t] + y * SIN[t] + diag) / rStep);
+      acc[t * nR + ri]++;
+    }
+  }
+  const minVotes = Math.max(14, Math.round(minDim * 0.12));
+  const cells = [];
+  for (let i = 0; i < acc.length; i++) if (acc[i] >= minVotes) cells.push(i);
+  cells.sort((a, b) => acc[b] - acc[a]);
+  const rawLines = [];
+  for (const c of cells) {
+    if (rawLines.length >= 40) break;
+    const t = Math.floor(c / nR), r = (c % nR) * rStep - diag;
+    let dup = false;
+    for (const l of rawLines) {
+      let dt = Math.abs(l.t - t), rr = r;
+      if (dt > 90) { dt = 180 - dt; rr = -r; }
+      if (dt <= 6 && Math.abs(l.r - rr) <= 12) { dup = true; break; }
+    }
+    if (!dup) rawLines.push({ t, r });
+  }
+  // turn each Hough line into its best-supported segment
+  let lines = [];
+  const used = new Uint8Array(ex.length);
+  for (const { t, r } of rawLines) {
+    const c = COS[t], s = SIN[t];
+    const us = [];
+    for (let k = 0; k < ex.length; k++) {
+      if (!used[k] && Math.abs(ex[k] * c + ey[k] * s - r) <= 1.6) us.push(-ex[k] * s + ey[k] * c);
+    }
+    if (us.length < minVotes * 0.7) continue;
+    us.sort((a, b) => a - b);
+    const gap = Math.max(6, 0.04 * diag);
+    let bestRun = null, start = 0;
+    for (let k = 1; k <= us.length; k++) {
+      if (k === us.length || us[k] - us[k - 1] > gap) {
+        const run = { u0: us[start], u1: us[k - 1], n: k - start };
+        if (!bestRun || run.n > bestRun.n) bestRun = run;
+        start = k;
+      }
+    }
+    const len = bestRun.u1 - bestRun.u0;
+    if (len < 0.15 * minDim) continue;
+    const coverage = clamp(bestRun.n / (len * Math.max(Math.abs(c), Math.abs(s))));
+    if (coverage < 0.35) continue;
+    // claim these edge pixels so overlapping Hough peaks don't produce duplicate lines
+    for (let k = 0; k < ex.length; k++) {
+      if (used[k] || Math.abs(ex[k] * c + ey[k] * s - r) > 2.5) continue;
+      const u = -ex[k] * s + ey[k] * c;
+      if (u >= bestRun.u0 - 2 && u <= bestRun.u1 + 2) used[k] = 1;
+    }
+    const strength = clamp(coverage * 1.15) * clamp(len / (0.4 * diag));
+    const p0 = [r * c - bestRun.u0 * s, r * s + bestRun.u0 * c];
+    const p1 = [r * c - bestRun.u1 * s, r * s + bestRun.u1 * c];
+    const ang = ((Math.atan2(c, -s) * 180 / Math.PI) + 360) % 180; // segment direction, 0 = horizontal
+    const incl = Math.min(ang, 180 - ang);
+    lines.push({
+      t, r, c, s, ang, incl, strength, coverage, len,
+      a: [p0[0] / W, p0[1] / H], b: [p1[0] / W, p1[1] / H],
+      mid: [(p0[0] + p1[0]) / 2 / W, (p0[1] + p1[1]) / 2 / H],
+    });
+  }
+  lines.sort((a, b) => b.strength - a.strength);
+  // drop "twin" lines: the two parallel edges of one thick stroke
+  lines = lines.filter((l, i) => !lines.slice(0, i).some(m => {
+    let dA = Math.abs(l.ang - m.ang); dA = Math.min(dA, 180 - dA);
+    if (dA > 5) return false;
+    const perp = Math.abs(l.mid[0] * W * m.c + l.mid[1] * H * m.s - m.r);
+    if (perp > 0.035 * diag) return false;
+    const pu = p => -p[0] * W * m.s + p[1] * H * m.c;
+    const mu0 = Math.min(pu(m.a), pu(m.b)), mu1 = Math.max(pu(m.a), pu(m.b));
+    const lu0 = Math.min(pu(l.a), pu(l.b)), lu1 = Math.max(pu(l.a), pu(l.b));
+    return Math.min(mu1, lu1) - Math.max(mu0, lu0) > 0.5 * (lu1 - lu0);
+  })).slice(0, 20);
+
+  // --- mirror symmetry (row/column means removed so plain gradients don't count) ---
+  const SZ = 64;
+  const gs = blur(gray, W, H, Math.max(1, W / SZ / 2)), ms = blur(mag, W, H, Math.max(1, W / SZ));
+  const sample = (src) => {
+    const out = new Float32Array(SZ * SZ);
+    for (let y = 0; y < SZ; y++) for (let x = 0; x < SZ; x++)
+      out[y * SZ + x] = src[Math.min(H - 1, Math.floor((y + .5) * H / SZ)) * W + Math.min(W - 1, Math.floor((x + .5) * W / SZ))];
+    return out;
+  };
+  const g64 = sample(gs), m64 = sample(ms);
+  function mirrorCorr(a, lr) {
+    let num = 0, den = 0;
+    for (let i = 0; i < SZ; i++) {
+      let mean = 0;
+      for (let j = 0; j < SZ; j++) mean += lr ? a[i * SZ + j] : a[j * SZ + i];
+      mean /= SZ;
+      for (let j = 0; j < SZ; j++) {
+        const v = (lr ? a[i * SZ + j] : a[j * SZ + i]) - mean;
+        const w = (lr ? a[i * SZ + SZ - 1 - j] : a[(SZ - 1 - j) * SZ + i]) - mean;
+        num += v * w; den += v * v;
+      }
+    }
+    return den > 1e-9 ? num / den : 0;
+  }
+  const symLR = 0.5 * mirrorCorr(g64, true) + 0.5 * mirrorCorr(m64, true);
+  const symTB = 0.5 * mirrorCorr(g64, false) + 0.5 * mirrorCorr(m64, false);
+
+  // --- golden spiral: edge flow along the spiral, 4 (or 8) orientations ---
+  const spiralBase = buildSpiral();
+  const sampleGrad = (x, y) => {
+    const xi = Math.round(x), yi = Math.round(y);
+    if (xi < 1 || yi < 1 || xi >= W - 1 || yi >= H - 1) return null;
+    const i = yi * W + xi; return [gx[i], gy[i]];
+  };
+  const flowAt = (x, y, nx, ny) => {
+    let best = 0;
+    for (let o = -3; o <= 3; o++) {
+      const g = sampleGrad(x + o * nx, y + o * ny);
+      if (g) best = Math.max(best, Math.abs(g[0] * nx + g[1] * ny));
+    }
+    return best;
+  };
+  let seed = 12345; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let baseFlow = 0;
+  for (let k = 0; k < 3000; k++) {
+    const a = rnd() * Math.PI;
+    baseFlow += flowAt(2 + rnd() * (W - 4), 2 + rnd() * (H - 4), Math.cos(a), Math.sin(a));
+  }
+  baseFlow = Math.max(baseFlow / 3000, 1e-4);
+  const aspect = W / H;
+  const orients = [];
+  const trs = aspect > 1.2 ? [false] : aspect < 1 / 1.2 ? [true] : [false, true];
+  for (const tr of trs) for (const fx of [false, true]) for (const fy of [false, true]) orients.push({ tr, fx, fy });
+  let bestSpiral = null;
+  for (const o of orients) {
+    let sum = 0, n = 0, hit = 0;
+    for (const p of spiralBase.samples) {
+      const [u, v] = tfPoint(p[0], p[1], o);
+      let [tu, tv] = tfVec(p[2], p[3], o);
+      let tx = tu * W, ty = tv * H; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const f = flowAt(u * W, v * H, -ty, tx); sum += f; n++; if (f > EDGE_T) hit++;
+    }
+    const ratio = sum / n / baseFlow;
+    const pole = tfPoint(spiralBase.pole[0], spiralBase.pole[1], o);
+    const eye = gauss((subject.x - pole[0]) ** 2 + (subject.y - pole[1]) ** 2, 0.07) * prom;
+    const cover = hit / n;
+    const flow = Math.min(1.2, Math.max(0, (ratio - 1.1) / 0.8)) * clamp(cover / 0.3);
+    const score = 0.35 * eye + 0.7 * flow;
+    if (!bestSpiral || score > bestSpiral.score) bestSpiral = { o, ratio, flow, eye, pole, score, cover };
+  }
+
+  /* ---------------- score every model ---------------- */
+  const res = {};
+  const xy = p => `(${pct(p.x)} across, ${pct(p.y)} down)`;
+
+  // Rule of thirds / phi grid
+  function gridModel(a, sigma, lineSigma, label) {
+    const pts = [[a, a], [1 - a, a], [a, 1 - a], [1 - a, 1 - a]];
+    const place = placement(pts, sigma);
+    const lift = massLift(pts, sigma * 1.3) * prom;
+    let lineScore = 0, lineHit = null;
+    for (const l of lines) {
+      let d = null;
+      if (l.incl < 8) d = Math.min(Math.abs(l.mid[1] - a), Math.abs(l.mid[1] - (1 - a)));
+      else if (l.incl > 82) d = Math.min(Math.abs(l.mid[0] - a), Math.abs(l.mid[0] - (1 - a)));
+      if (d === null) continue;
+      const s = l.strength * gauss(d * d, lineSigma);
+      if (s > lineScore) { lineScore = s; lineHit = l; }
+    }
+    const score = 0.62 * place + 0.15 * lift + 0.35 * lineScore;
+    const nr = nearest(pts, subject);
+    const ev = [];
+    ev.push(`Main subject ${xy(subject)} is ${pct(nr.d)} of the frame from the nearest ${label} point`);
+    if (lineHit && lineScore > 0.25) ev.push(`a strong ${lineHit.incl < 8 ? 'horizontal' : 'vertical'} line lies on a ${label} line`);
+    return { score, pts, a, nearPt: nr.pt, lineHit: lineScore > 0.25 ? lineHit : null, evidence: ev.join('; ') + '.' };
+  }
+  res.thirds = gridModel(1 / 3, 0.07, 0.035, 'thirds');
+  res.phi = gridModel(1 / PHI ** 2, 0.05, 0.025, 'phi-grid');
+  res.phi.score *= 0.95;
+
+  // Golden spiral
+  res.spiral = {
+    score: bestSpiral.score, spiral: bestSpiral,
+    evidence: `Edges follow the spiral ${bestSpiral.ratio.toFixed(2)}× more than a random curve; subject is ${pct(Math.hypot(subject.x - bestSpiral.pole[0], subject.y - bestSpiral.pole[1]))} from the spiral’s eye.`,
+  };
+
+  // Centre
+  {
+    const place = placement([[0.5, 0.5]], 0.08);
+    const lift = massLift([[0.5, 0.5]], 0.12) * prom;
+    const score = 0.65 * place + 0.35 * lift;
+    res.center = { score, evidence: `Main subject ${xy(subject)} is ${pct(Math.hypot(subject.x - .5, subject.y - .5))} of the frame from the exact centre.` };
+  }
+
+  // Symmetry
+  {
+    // symmetry should describe the whole frame, not only a small centred object
+    let outer = 0, all = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const m = mag[y * W + x]; if (m <= EDGE_T) continue;
+      all += m; if (Math.abs((x + .5) / W - .5) > 0.15 || Math.abs((y + .5) / H - .5) > 0.15) outer += m;
+    }
+    const spread = 0.5 + 0.5 * clamp((all ? outer / all : 0) / 0.5);
+    const sLR = 1.1 * clamp((symLR - 0.3) / 0.55) * spread, sTB = clamp((symTB - 0.35) / 0.5) * spread;
+    const lr = sLR >= sTB;
+    res.symmetry = {
+      score: Math.max(sLR, sTB), axis: lr ? 'v' : 'h',
+      evidence: lr ? `Left and right halves mirror each other (mirror correlation ${symLR.toFixed(2)}).`
+                   : `Top and bottom halves mirror each other like a reflection (mirror correlation ${symTB.toFixed(2)}).`,
+    };
+  }
+
+  // Diagonals
+  {
+    const dl = lines.filter(l => l.incl >= 20 && l.incl <= 70 && l.strength > 0.12);
+    const corners = [[[0, 0], [1, 1]], [[1, 0], [0, 1]]];
+    let best = 0;
+    for (const l of dl) {
+      let near = 0;
+      for (const [p, q2] of corners) {
+        const d1 = distPointLine(p[0] * W, p[1] * H, l), d2 = distPointLine(q2[0] * W, q2[1] * H, l);
+        near = Math.max(near, gauss(((d1 + d2) / 2 / diag) ** 2, 0.08));
+      }
+      best = Math.max(best, l.strength * (0.75 + 0.35 * near));
+    }
+    const sumTop = dl.slice(0, 3).reduce((s, l) => s + l.strength, 0) * 0.6;
+    const lineScore = clamp(Math.max(best, sumTop));
+    const hist = clamp((dFrac - 0.36) / 0.25);
+    const score = 0.55 * lineScore + 0.35 * hist;
+    res.diagonal = {
+      score, lines: dl.slice(0, 4),
+      evidence: `${dl.length} strong diagonal line${dl.length === 1 ? '' : 's'} found; ${pct(dFrac)} of edge energy runs diagonally.`,
+    };
+  }
+
+  // Horizontal
+  {
+    const hl = lines.filter(l => l.incl < 10);
+    const top = hl.length ? Math.max(...hl.map(l => l.strength * (0.6 + 0.4 * clamp(Math.abs(l.b[0] - l.a[0]) / 0.8)))) : 0;
+    const hist = clamp((hFrac - 0.2) / 0.3);
+    const multi = clamp(hl.slice(0, 3).reduce((s, l) => s + l.strength, 0) * 0.4);
+    const score = 0.45 * top + 0.35 * hist + 0.2 * multi;
+    const main = hl[0];
+    res.horizontal = {
+      score, lines: hl.slice(0, 3),
+      evidence: (main ? `Strongest horizontal line is ${pct(main.mid[1])} down the frame; ` : 'No long horizontal line; ') + `${pct(hFrac)} of edge energy is horizontal.`,
+    };
+  }
+
+  // Vertical
+  {
+    const vl = lines.filter(l => l.incl > 80);
+    const top = vl.length ? Math.max(...vl.map(l => l.strength * (0.6 + 0.4 * clamp(Math.abs(l.b[1] - l.a[1]) / 0.8)))) : 0;
+    const rhythm = clamp(vl.slice(0, 4).reduce((s, l) => s + l.strength, 0) * 0.4);
+    const hist = clamp((vFrac - 0.2) / 0.3);
+    const score = 0.4 * top + 0.25 * rhythm + 0.35 * hist;
+    res.vertical = {
+      score, lines: vl.slice(0, 5),
+      evidence: `${vl.length} strong vertical line${vl.length === 1 ? '' : 's'}; ${pct(vFrac)} of edge energy is vertical.`,
+    };
+  }
+
+  // Leading lines / vanishing point
+  {
+    const ll = lines.filter(l => l.incl >= 10 && l.incl <= 82 && l.strength > 0.2);
+    const tol = 0.025 * diag;
+    let best = null;
+    for (let i = 0; i < ll.length; i++) for (let j = i + 1; j < ll.length; j++) {
+      const A = ll[i], B = ll[j];
+      let dAng = Math.abs(A.ang - B.ang); dAng = Math.min(dAng, 180 - dAng);
+      if (dAng < 8) continue;
+      const det = A.c * B.s - B.c * A.s; if (Math.abs(det) < 1e-6) continue;
+      const x = (A.r * B.s - B.r * A.s) / det, y = (A.c * B.r - B.c * A.r) / det;
+      if (x < -0.25 * W || x > 1.25 * W || y < -0.25 * H || y > 1.25 * H) continue;
+      let support = 0; const members = [];
+      for (const l of ll) if (Math.abs(x * l.c + y * l.s - l.r) < tol) { support += l.strength; members.push(l); }
+      const dirs = [];
+      for (const l of members) if (!dirs.some(a => Math.min(Math.abs(a - l.ang), 180 - Math.abs(a - l.ang)) < 6)) dirs.push(l.ang);
+      const eff = support * (dirs.length >= 3 ? 1 : 0.4);
+      if (!best || eff > best.eff) best = { x: x / W, y: y / H, support, eff, members, dirs: dirs.length };
+    }
+    let score = 0, ev = 'No set of converging lines found.';
+    if (best) {
+      const inside = best.x >= 0 && best.x <= 1 && best.y >= 0 && best.y <= 1;
+      score = Math.min(1.1, Math.max(0, (best.support - 0.6) / 1.2)) * (best.dirs >= 3 ? 1 : 0.35) * (inside ? 1 : 0.85);
+      ev = `${best.members.length} lines converge on a point ${inside ? 'inside' : 'just outside'} the frame at (${pct(best.x)}, ${pct(best.y)}).`;
+    }
+    res.leading = { score, vp: best, evidence: ev };
+  }
+
+  // Triangle
+  {
+    const tl = lines.filter(l => l.incl >= 25 && l.incl <= 75 && l.strength > 0.12);
+    let best = null;
+    for (let i = 0; i < tl.length; i++) for (let j = i + 1; j < tl.length; j++) {
+      const A = tl[i], B = tl[j];
+      if ((A.ang < 90) === (B.ang < 90)) continue; // need opposite slopes
+      const det = A.c * B.s - B.c * A.s; if (Math.abs(det) < 1e-6) continue;
+      const ax = (A.r * B.s - B.r * A.s) / det / W, ay = (A.c * B.r - B.c * A.r) / det / H;
+      if (ax < 0.1 || ax > 0.9 || ay < -0.15 || ay > 1.15) continue;
+      const left = A.mid[0] < B.mid[0] ? A : B, right = left === A ? B : A;
+      if (!(left.mid[0] < ax && right.mid[0] > ax)) continue;
+      const up = A.mid[1] > ay && B.mid[1] > ay, down = A.mid[1] < ay && B.mid[1] < ay;
+      if (!up && !down) continue;
+      // segments should reach toward the apex
+      const reach = l => Math.min(Math.hypot(l.a[0] - ax, l.a[1] - ay), Math.hypot(l.b[0] - ax, l.b[1] - ay));
+      const close = gauss(((reach(A) + reach(B)) / 2) ** 2, 0.25);
+      const s = Math.sqrt(A.strength * B.strength) * (0.5 + 0.5 * close);
+      if (!best || s > best.s) best = { s, apex: [ax, ay], A, B, up };
+    }
+    let score = 0;
+    if (best) {
+      const far = l => Math.hypot(l.a[0] - best.apex[0], l.a[1] - best.apex[1]) > Math.hypot(l.b[0] - best.apex[0], l.b[1] - best.apex[1]) ? l.a : l.b;
+      const by = (far(best.A)[1] + far(best.B)[1]) / 2;
+      let base = Math.abs(by - (best.up ? 1 : 0)) < 0.08 ? 0.6 : 0; // the frame edge can act as the base
+      for (const l of lines) if (l.incl < 12 && Math.abs(l.mid[1] - by) < 0.06) base = Math.max(base, clamp(l.strength * 1.5));
+      score = 0.9 * clamp(best.s * 1.3) + 0.25 * base;
+    }
+    res.triangle = {
+      score, tri: best,
+      evidence: best ? `Two opposite-sloping lines meet at an apex ${best.up ? 'above' : 'below'} them at (${pct(best.apex[0])}, ${pct(best.apex[1])}).`
+                     : 'No pair of converging opposite-sloped lines found.',
+    };
+  }
+
+  // Negative space
+  {
+    let bg = 0, bgN = 0;
+    for (let i = 0; i < N; i++) if (sal[i] < 0.3) { bgN++; if (mag[i] > EDGE_T) bg++; }
+    const bgDensity = bgN ? bg / bgN : 1;
+    const small = clamp((0.2 - area) / 0.15);
+    const quiet = clamp((0.08 - bgDensity) / 0.07);
+    const score = small * quiet * (0.6 + 0.4 * prom) * 0.9;
+    res.negative = {
+      score, bbox,
+      evidence: `The subject occupies about ${pct(area)} of the frame; only ${pct(bgDensity)} of the surrounding area contains detail.`,
+    };
+  }
+
+  for (const id in res) { res[id].raw = res[id].score; res[id].score = soft(res[id].score); }
+  const ranking = Object.keys(MODELS).map(id => ({ id, ...MODELS[id], ...res[id] })).sort((a, b) => b.raw - a.raw);
+  return {
+    W, H, sal, lines, subject, peaks, bbox, area, prom, hFrac, vFrac, dFrac, edgeDensity, symLR, symTB,
+    spiralBase, res, ranking,
+  };
+}
+
+function distPointLine(x, y, l) { return Math.abs(x * l.c + y * l.s - l.r); }
+
+/* ---------------- golden spiral geometry ---------------- */
+
+// Built in a φ×1 golden rectangle by repeatedly cutting off squares, then
+// normalized to the unit square so it stretches to any frame.
+function buildSpiral() {
+  let x = 0, y = 0, w = PHI, h = 1;
+  const arcs = [], squares = [], samples = [];
+  for (let k = 0; k < 12; k++) {
+    const dir = k % 4;
+    let sq, cx, cy, r, a0;
+    if (dir === 0) { r = h; sq = [x, y, h, h]; cx = x + h; cy = y + h; a0 = Math.PI; x += h; w -= h; }
+    else if (dir === 1) { r = w; sq = [x, y, w, w]; cx = x; cy = y + w; a0 = 1.5 * Math.PI; y += w; h -= w; }
+    else if (dir === 2) { r = h; sq = [x + w - h, y, h, h]; cx = x + w - h; cy = y; a0 = 0; w -= h; }
+    else { r = w; sq = [x, y + h - w, w, w]; cx = x + w; cy = y + h - w; a0 = 0.5 * Math.PI; h -= w; }
+    squares.push([sq[0] / PHI, sq[1], sq[2] / PHI, sq[3]]);
+    const n = Math.max(6, Math.round(r * 90));
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + (i / n) * Math.PI / 2;
+      const p = [(cx + r * Math.cos(a)) / PHI, cy + r * Math.sin(a), -Math.sin(a) / PHI, Math.cos(a)];
+      pts.push(p);
+      if (k < 7) samples.push(p);
+    }
+    arcs.push(pts);
+  }
+  return { arcs, squares, samples, pole: [(x + w / 2) / PHI, y + h / 2] };
+}
+function tfPoint(u, v, o) { if (o.tr) [u, v] = [v, u]; if (o.fx) u = 1 - u; if (o.fy) v = 1 - v; return [u, v]; }
+function tfVec(u, v, o) { if (o.tr) [u, v] = [v, u]; if (o.fx) u = -u; if (o.fy) v = -v; return [u, v]; }
+
+/* ---------------- drawing ---------------- */
+
+const css = getComputedStyle(document.documentElement);
+const ACCENT = () => css.getPropertyValue('--accent').trim() || '#fb8a4c';
+
+function stroke(ctx, path, { w = 1.5, color = 'rgba(255,255,255,0.92)', dash = null } = {}) {
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (dash) ctx.setLineDash(dash);
+  ctx.lineWidth = w + 2.2; ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); path(); ctx.stroke();
+  ctx.lineWidth = w; ctx.strokeStyle = color;
+  ctx.beginPath(); path(); ctx.stroke();
+  ctx.restore();
+}
+function dot(ctx, x, y, r, color, fill = false) {
+  stroke(ctx, () => ctx.arc(x, y, r, 0, Math.PI * 2), { w: 2, color });
+  if (fill) { ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r * 0.35, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+}
+function seg(ctx, w, h, a, b, opts) { stroke(ctx, () => { ctx.moveTo(a[0] * w, a[1] * h); ctx.lineTo(b[0] * w, b[1] * h); }, opts); }
+function extend(l, t0 = -2, t1 = 3) {
+  const d = [l.b[0] - l.a[0], l.b[1] - l.a[1]];
+  return [[l.a[0] + d[0] * t0, l.a[1] + d[1] * t0], [l.a[0] + d[0] * t1, l.a[1] + d[1] * t1]];
+}
+
+const GUIDES = {
+  thirds(ctx, w, h, R) { grid(ctx, w, h, R.res.thirds); },
+  phi(ctx, w, h, R) { grid(ctx, w, h, R.res.phi); },
+  spiral(ctx, w, h, R) {
+    const o = R.res.spiral.spiral.o, sb = R.spiralBase;
+    for (const s of sb.squares.slice(0, 8)) {
+      const c = [[s[0], s[1]], [s[0] + s[2], s[1]], [s[0] + s[2], s[1] + s[3]], [s[0], s[1] + s[3]]].map(p => tfPoint(p[0], p[1], o));
+      stroke(ctx, () => { ctx.moveTo(c[0][0] * w, c[0][1] * h); for (const p of c.slice(1)) ctx.lineTo(p[0] * w, p[1] * h); ctx.closePath(); },
+        { w: 0.8, color: 'rgba(255,255,255,0.45)' });
+    }
+    stroke(ctx, () => {
+      let first = true;
+      for (const arc of sb.arcs) for (const p of arc) {
+        const [u, v] = tfPoint(p[0], p[1], o);
+        if (first) { ctx.moveTo(u * w, v * h); first = false; } else ctx.lineTo(u * w, v * h);
+      }
+    }, { w: 2.4, color: ACCENT() });
+    const pole = R.res.spiral.spiral.pole;
+    dot(ctx, pole[0] * w, pole[1] * h, 6, ACCENT(), true);
+  },
+  center(ctx, w, h) {
+    stroke(ctx, () => { ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); }, { w: 1, dash: [6, 6] });
+    const m = Math.min(w, h);
+    for (const r of [0.08, 0.18, 0.3]) stroke(ctx, () => ctx.arc(w / 2, h / 2, r * m, 0, Math.PI * 2), { w: r === 0.08 ? 2.2 : 1, color: r === 0.08 ? ACCENT() : 'rgba(255,255,255,0.7)' });
+  },
+  symmetry(ctx, w, h, R) {
+    const v = R.res.symmetry.axis === 'v';
+    stroke(ctx, () => { if (v) { ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); } else { ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); } }, { w: 2.4, color: ACCENT(), dash: [10, 7] });
+    // mirror arrows
+    const arrows = v ? [[0.3, 0.25], [0.3, 0.5], [0.3, 0.75]] : [[0.25, 0.3], [0.5, 0.3], [0.75, 0.3]];
+    for (const [a, b] of arrows) {
+      if (v) stroke(ctx, () => { ctx.moveTo(a * w, b * h); ctx.lineTo((1 - a) * w, b * h); }, { w: 1, dash: [3, 5] });
+      else stroke(ctx, () => { ctx.moveTo(a * w, b * h); ctx.lineTo(a * w, (1 - b) * h); }, { w: 1, dash: [3, 5] });
+    }
+  },
+  diagonal(ctx, w, h, R) {
+    seg(ctx, w, h, [0, 0], [1, 1], { w: 1, dash: [6, 6], color: 'rgba(255,255,255,0.6)' });
+    seg(ctx, w, h, [1, 0], [0, 1], { w: 1, dash: [6, 6], color: 'rgba(255,255,255,0.6)' });
+    for (const l of R.res.diagonal.lines) seg(ctx, w, h, l.a, l.b, { w: 3, color: ACCENT() });
+  },
+  leading(ctx, w, h, R) {
+    const vp = R.res.leading.vp; if (!vp) return;
+    for (const l of vp.members) {
+      const far = Math.hypot(l.a[0] - vp.x, l.a[1] - vp.y) > Math.hypot(l.b[0] - vp.x, l.b[1] - vp.y) ? l.a : l.b;
+      seg(ctx, w, h, far, [vp.x, vp.y], { w: 1, dash: [5, 5] });
+      seg(ctx, w, h, l.a, l.b, { w: 3, color: ACCENT() });
+    }
+    dot(ctx, vp.x * w, vp.y * h, 7, ACCENT(), true);
+  },
+  horizontal(ctx, w, h, R) {
+    for (const l of R.res.horizontal.lines) {
+      const [p, q2] = extend(l); seg(ctx, w, h, p, q2, { w: 1, dash: [6, 6], color: 'rgba(255,255,255,0.6)' });
+      seg(ctx, w, h, l.a, l.b, { w: 3, color: ACCENT() });
+    }
+  },
+  vertical(ctx, w, h, R) {
+    for (const l of R.res.vertical.lines) {
+      const [p, q2] = extend(l); seg(ctx, w, h, p, q2, { w: 1, dash: [6, 6], color: 'rgba(255,255,255,0.6)' });
+      seg(ctx, w, h, l.a, l.b, { w: 3, color: ACCENT() });
+    }
+  },
+  triangle(ctx, w, h, R) {
+    const t = R.res.triangle.tri; if (!t) return;
+    const far = (l) => Math.hypot(l.a[0] - t.apex[0], l.a[1] - t.apex[1]) > Math.hypot(l.b[0] - t.apex[0], l.b[1] - t.apex[1]) ? l.a : l.b;
+    const pA = far(t.A), pB = far(t.B);
+    stroke(ctx, () => { ctx.moveTo(t.apex[0] * w, t.apex[1] * h); ctx.lineTo(pA[0] * w, pA[1] * h); ctx.lineTo(pB[0] * w, pB[1] * h); ctx.closePath(); }, { w: 1.2, dash: [6, 5] });
+    seg(ctx, w, h, t.A.a, t.A.b, { w: 3, color: ACCENT() });
+    seg(ctx, w, h, t.B.a, t.B.b, { w: 3, color: ACCENT() });
+    dot(ctx, t.apex[0] * w, t.apex[1] * h, 6, ACCENT(), true);
+  },
+  negative(ctx, w, h, R) {
+    const b = R.res.negative.bbox;
+    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.rect(b.x0 * w, b.y0 * h, (b.x1 - b.x0) * w, (b.y1 - b.y0) * h); ctx.fill('evenodd'); ctx.restore();
+    stroke(ctx, () => ctx.rect(b.x0 * w, b.y0 * h, (b.x1 - b.x0) * w, (b.y1 - b.y0) * h), { w: 2.2, color: ACCENT() });
+  },
+};
+function grid(ctx, w, h, g) {
+  const a = g.a;
+  stroke(ctx, () => {
+    for (const t of [a, 1 - a]) { ctx.moveTo(t * w, 0); ctx.lineTo(t * w, h); ctx.moveTo(0, t * h); ctx.lineTo(w, t * h); }
+  }, { w: 1.2 });
+  for (const p of g.pts) {
+    const hit = p === g.nearPt;
+    dot(ctx, p[0] * w, p[1] * h, hit ? 9 : 6, hit ? ACCENT() : 'rgba(255,255,255,0.92)');
+  }
+  if (g.lineHit) seg(ctx, w, h, g.lineHit.a, g.lineHit.b, { w: 3, color: ACCENT() });
+}
+
+let heatCache = null;
+function heatCanvas(R) {
+  if (heatCache && heatCache.R === R) return heatCache.c;
+  const c = document.createElement('canvas'); c.width = R.W; c.height = R.H;
+  const x = c.getContext('2d'); const im = x.createImageData(R.W, R.H);
+  for (let i = 0; i < R.sal.length; i++) {
+    const v = R.sal[i];
+    im.data[i * 4] = 255 * clamp(v * 1.8);
+    im.data[i * 4 + 1] = 255 * clamp(v * 1.8 - 0.8);
+    im.data[i * 4 + 2] = 255 * clamp(0.6 - v * 1.5) * 0.6;
+    im.data[i * 4 + 3] = 255 * (0.25 + 0.55 * v);
+  }
+  x.putImageData(im, 0, 0);
+  heatCache = { R, c };
+  return c;
+}
+
+/* ---------------- UI ---------------- */
+
+const $ = id => document.getElementById(id);
+const drop = $('drop'), fileInput = $('file'), photo = $('photo'), overlay = $('overlay');
+let result = null, selected = null;
+
+function render() {
+  if (!result) return;
+  const w = photo.clientWidth, h = photo.clientHeight; if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  overlay.width = Math.round(w * dpr); overlay.height = Math.round(h * dpr);
+  const ctx = overlay.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if ($('tHeat').checked) { ctx.imageSmoothingEnabled = true; ctx.drawImage(heatCanvas(result), 0, 0, w, h); }
+  if ($('tLines').checked) for (const l of result.lines) seg(ctx, w, h, l.a, l.b, { w: 1.4, color: 'rgba(120,220,255,0.95)' });
+  if ($('tGuide').checked && selected) GUIDES[selected](ctx, w, h, result);
+  if ($('tSubject').checked) {
+    const s = result.subject, x = s.x * w, y = s.y * h;
+    stroke(ctx, () => { ctx.moveTo(x - 12, y); ctx.lineTo(x - 4, y); ctx.moveTo(x + 4, y); ctx.lineTo(x + 12, y); ctx.moveTo(x, y - 12); ctx.lineTo(x, y - 4); ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 12); }, { w: 2, color: '#fff' });
+  }
+}
+
+function confidence(top, second) {
+  const gap = top - second;
+  if (top >= 0.6 && gap >= 0.08) return 'Strong match';
+  if (top >= 0.4) return gap >= 0.05 ? 'Good match' : 'Close call';
+  return 'Weak match';
+}
+
+function showResults(R) {
+  const [top, second] = R.ranking;
+  const conf = confidence(top.score, second.score);
+  $('verdict').innerHTML = '';
+  const v = $('verdict');
+  v.insertAdjacentHTML('beforeend', `<div class="eyebrow">Closest composition model</div>`);
+  const h2 = document.createElement('h2'); h2.textContent = top.name; v.appendChild(h2);
+  v.insertAdjacentHTML('beforeend', `<span class="conf">${conf} · ${pct(top.score)}</span>`);
+  const p = document.createElement('p'); p.textContent = top.desc; v.appendChild(p);
+  const why = document.createElement('p'); why.className = 'why'; why.textContent = top.evidence; v.appendChild(why);
+  if (conf === 'Close call') {
+    const cc = document.createElement('p'); cc.className = 'why';
+    cc.textContent = `It also fits ${second.name} almost as well (${pct(second.score)}).`; v.appendChild(cc);
+  } else if (conf === 'Weak match') {
+    const cc = document.createElement('p'); cc.className = 'why';
+    cc.textContent = 'No classic model stands out strongly in this photo; this is simply the nearest fit.'; v.appendChild(cc);
+  }
+
+  const ol = $('ranking'); ol.innerHTML = '';
+  for (const m of R.ranking) {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.id = m.id;
+    b.setAttribute('aria-pressed', String(m.id === selected));
+    b.innerHTML = `<span class="name"></span><span class="pct">${pct(m.score)}</span><span class="bar"><i style="width:${Math.max(2, m.score * 100)}%"></i></span><span class="ev"></span>`;
+    b.querySelector('.name').textContent = m.name;
+    b.querySelector('.ev').textContent = m.evidence;
+    b.addEventListener('click', () => {
+      selected = m.id;
+      ol.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.id === selected)));
+      $('tGuide').checked = true; render();
+    });
+    li.appendChild(b); ol.appendChild(li);
+  }
+
+  const stats = [
+    [`${pct(R.subject.x)}, ${pct(R.subject.y)}`, 'Main subject (x, y)'],
+    [pct(R.area), 'Subject area'],
+    [String(R.lines.length), 'Straight lines'],
+    [`${pct(R.hFrac)} / ${pct(R.vFrac)} / ${pct(R.dFrac)}`, 'Horiz / vert / diag edges'],
+    [Math.max(R.symLR, R.symTB).toFixed(2), 'Mirror symmetry'],
+  ];
+  $('stats').innerHTML = stats.map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join('');
+}
+
+function loadFile(file) {
+  $('error').hidden = true;
+  if (!file || !file.type.startsWith('image/')) { showError('That file doesn’t look like an image.'); return; }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    if (photo.dataset.url) URL.revokeObjectURL(photo.dataset.url);
+    photo.dataset.url = url;
+    photo.src = url;
+    $('workspace').classList.add('show');
+    drop.classList.add('compact');
+    drop.querySelector('strong').textContent = 'Try another photo';
+    $('verdict').innerHTML = '<div class="busy">Analyzing…</div>';
+    $('ranking').innerHTML = ''; $('stats').innerHTML = '';
+    result = null; render();
+    setTimeout(() => {
+      try {
+        result = analyze(img);
+        selected = result.ranking[0].id;
+        showResults(result);
+        if (photo.complete) render(); else photo.onload = render;
+      } catch (e) { console.error(e); showError('Sorry, this image could not be analyzed.'); }
+    }, 30);
+  };
+  img.onerror = () => showError('Your browser could not open this image format (try JPG or PNG).');
+  img.src = url;
+}
+function showError(msg) { const e = $('error'); e.textContent = msg; e.hidden = false; }
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+fileInput.addEventListener('change', () => { loadFile(fileInput.files[0]); fileInput.value = ''; });
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+document.addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (item) loadFile(item.getAsFile());
+});
+['tGuide', 'tSubject', 'tLines', 'tHeat'].forEach(id => $(id).addEventListener('change', render));
+new ResizeObserver(render).observe(photo);
+
+window.__analyzeComposition = analyze; // exposed for testing
+})();
+</script>
+</body>
+</html>
