@@ -37,6 +37,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; }
   body {
     background: var(--bg);
@@ -124,6 +125,25 @@
   .btn { display: inline-block; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
   .btn:hover { border-color: var(--accent); }
   button:focus-visible, a:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cap-form { display: grid; gap: 10px; }
+  .field { display: grid; gap: 4px; }
+  .field > label { font-size: 13px; font-weight: 600; }
+  .field > label span { font-weight: 400; color: var(--muted); }
+  .field input[type="text"], .field input[type="password"], .field textarea, .cap-text {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical;
+  }
+  .field input:focus, .field textarea:focus, .cap-text:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .hint { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .cap-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:disabled { opacity: .55; cursor: default; }
+  .cap-out { display: grid; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .cap-text { font-family: Georgia, "Times New Roman", serif; font-size: 16px; line-height: 1.55; min-height: 7em; }
+  .cap-check { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+  .cap-status { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+  .cap-status:empty { display: none; }
   .note { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
   .busy { color: var(--muted); padding: 24px 0; text-align: center; }
   .error { color: #b91c1c; margin-top: 10px; }
@@ -132,7 +152,7 @@
 <body>
 <header>
   <h1>Composition Finder</h1>
-  <p>Upload a photo and the page will work out which classic composition model it follows most closely — rule of thirds, golden spiral, diagonals, symmetry, leading lines and more. The photo is analyzed in your browser and never uploaded. If it carries GPS data, the page also shows where it was taken on a map.</p>
+  <p>Upload a photo and the page will work out which classic composition model it follows most closely — rule of thirds, golden spiral, diagonals, symmetry, leading lines and more. It also shows where the photo was taken when it carries GPS data, and can write an AP-style caption. The analysis runs in your browser; only a caption request sends a smaller copy of the photo to Claude.</p>
 </header>
 
 <main>
@@ -159,6 +179,37 @@
         <label><input type="checkbox" id="tHeat"> Saliency heatmap</label>
       </div>
       <div id="stats" class="stats"></div>
+    </div>
+
+    <div class="card" id="capCard">
+      <div class="loc-head"><h3>AP caption</h3><span id="capMode" class="loc-place"></span></div>
+      <div class="cap-form">
+        <div class="field">
+          <label for="capWho">Photographer <span>(for the credit line)</span></label>
+          <input id="capWho" type="text" placeholder="e.g. Jane Smith" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="capNotes">What’s happening <span>(names, event, background; optional)</span></label>
+          <textarea id="capNotes" rows="2" placeholder="e.g. Runners at the Boston Marathon finish line; the woman in front is Hellen Obiri"></textarea>
+        </div>
+        <div class="field" id="capKeyRow" hidden>
+          <label for="capKey">Anthropic API key</label>
+          <input id="capKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+          <label class="inline"><input type="checkbox" id="capRemember"> Remember on this device</label>
+          <p class="hint">This copy of the page isn’t running inside claude.ai, so it needs your own API key. The key stays in this browser and is sent only to api.anthropic.com.</p>
+        </div>
+        <div class="cap-actions">
+          <button type="button" class="btn primary" id="capGo" disabled>Write caption</button>
+          <button type="button" class="btn" id="capStop" hidden>Stop</button>
+        </div>
+      </div>
+      <p id="capStatus" class="cap-status" role="status"></p>
+      <div class="cap-out" id="capOut" hidden>
+        <textarea id="capText" class="cap-text" rows="5" aria-label="Caption"></textarea>
+        <div class="cap-actions"><button type="button" class="btn" id="capCopy">Copy caption</button></div>
+        <p class="hint" id="capCheckHead">Check before filing:</p>
+        <ul id="capCheck" class="cap-check"></ul>
+      </div>
     </div>
 
     <div class="card" id="locCard">
@@ -1187,8 +1238,9 @@ async function placeName(lat, lon) {
     const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&lat=${lat}&lon=${lon}`, { signal: ctl.signal });
     if (!r.ok) return null;
     const j = await r.json(), a = j.address || {};
-    const parts = [a.city || a.town || a.village || a.hamlet || a.suburb || a.county, a.state, a.country].filter(Boolean);
-    return [...new Set(parts)].join(', ') || null;
+    const city = a.city || a.town || a.village || a.hamlet || a.suburb || a.county;
+    const label = [...new Set([city, a.state, a.country].filter(Boolean))].join(', ');
+    return label ? { city, state: a.state, country: a.country, label } : null;
   } catch { return null; } finally { clearTimeout(timer); }
 }
 
@@ -1269,14 +1321,19 @@ function showResults(R) {
 
 let mapView = null, locToken = 0;
 const fmtCoord = (v, pos, neg) => `${Math.abs(v).toFixed(5)}° ${v >= 0 ? pos : neg}`;
-function fmtTaken(s) {
+function parseTaken(s) {
   const m = /^(\d{4}):(\d\d):(\d\d)[ T](\d\d):(\d\d)/.exec(s || '');
-  if (!m) return s || null;
+  if (!m) return null;
   const d = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
-  return isNaN(d) ? s : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return isNaN(d) ? null : d;
+}
+function fmtTaken(s) {
+  const d = parseTaken(s);
+  return d ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : (s || null);
 }
 function showLocation(info, token) {
   if (token !== locToken) return;
+  current.info = info;
   if (mapView) { mapView.destroy(); mapView = null; }
   const body = $('locBody'), place = $('locPlace');
   place.textContent = '';
@@ -1315,7 +1372,222 @@ function showLocation(info, token) {
     try { navigator.clipboard.writeText(q).then(() => done(true), () => done(false)); } catch { done(false); }
   });
   mapView = createMap($('map'), lat, lon, country);
-  placeName(lat, lon).then(name => { if (name && token === locToken) place.textContent = name; });
+  current.country = country;
+  placeName(lat, lon).then(pl => { if (pl && token === locToken) { place.textContent = pl.label; current.place = pl; } });
+}
+
+/* ---------------- AP caption (Claude) ---------------- */
+
+const current = { file: null, info: null, place: null, country: null };
+const AP_MONTHS = ['Jan.', 'Feb.', 'March', 'April', 'May', 'June', 'July', 'Aug.', 'Sept.', 'Oct.', 'Nov.', 'Dec.'];
+const apDate = d => `${d.toLocaleDateString('en-US', { weekday: 'long' })}, ${AP_MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} },
+};
+
+let capMode = null;          // 'claude' (inside claude.ai) | 'api' (own API key)
+let sampleFn = null;
+let capCtl = null;
+
+function captionPrompt() {
+  const taken = parseTaken(current.info && current.info.taken);
+  const pl = current.place;
+  let place = 'unknown';
+  if (pl) place = `city: ${pl.city || 'unknown'}; state/region: ${pl.state || 'unknown'}; country: ${pl.country || 'unknown'}`;
+  else if (current.country) place = `somewhere in ${current.country} (city unknown)`;
+  const who = $('capWho').value.trim();
+  const notes = $('capNotes').value.trim().slice(0, 2000);
+  return `You are a photo editor at The Associated Press. Write the caption for the attached photo in AP photo caption style.
+
+Facts from the photo file (use exactly; do not change them):
+- Date taken: ${taken ? apDate(taken) : 'unknown'}
+- Place (from the camera's GPS): ${place}
+- Photographer for the credit line: ${who || 'unknown'}
+
+Notes from the photographer. They are the only source for names, events and background, and may be empty:
+<notes>
+${notes}
+</notes>
+
+AP caption rules:
+1. First sentence, present tense: who or what is in the photo, doing what, where, then the day and date. Example: "A cyclist rides past sunflower fields near Lyon, France, Saturday, June 14, 2025."
+2. Write the place as AP would: a U.S. city followed by its AP state abbreviation ("Sacramento, Calif."); a city abroad followed by its country ("Lyon, France"); cities AP uses on their own (New York, Los Angeles, Chicago, Washington, Paris, London, Tokyo, Rome and similar) stand alone.
+3. Optional second sentence in past tense with background, using only the notes. Never invent names, events, numbers or reasons.
+4. Never identify a real person from their appearance. Name people only when the notes name them; otherwise describe them ("A woman", "Fans").
+5. When the date, place or a needed fact is unknown, put a placeholder in square brackets, such as [CITY], [DAY, DATE] or [NAME].
+6. End with the credit line in parentheses: "(AP Photo/${who || '[PHOTOGRAPHER]'})".
+7. Keep the caption under 60 words, not counting the credit line.
+
+Reply with only a JSON object, no other text:
+{"caption": "the full caption including the credit line", "check": ["short item the editor must verify or fill in before filing"]}`;
+}
+
+async function photoJpeg(file) {
+  const bmp = await createImageBitmap(file);
+  const sc = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  if (bmp.close) bmp.close();
+  return new Promise((res, rej) => cv.toBlob(b => b ? res(b) : rej({ code: 'image_rejected' }), 'image/jpeg', 0.86));
+}
+const blobToBase64 = blob => new Promise((res, rej) => {
+  const fr = new FileReader();
+  fr.onload = () => res(String(fr.result).split(',')[1]);
+  fr.onerror = () => rej(fr.error);
+  fr.readAsDataURL(blob);
+});
+function parseLooseJson(text) {
+  try { return JSON.parse(text); } catch {}
+  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
+  if (fence) { try { return JSON.parse(fence[1]); } catch {} }
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch {} }
+  throw { code: 'invalid_json' };
+}
+
+// Direct Claude API call, used when the page is not running inside claude.ai.
+async function captionViaApi(key, prompt, jpeg, signal) {
+  const data = await blobToBase64(jpeg);
+  let r;
+  try {
+    r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2026-10-21',
+        'anthropic-beta': 'server-side-fallback-2026-07-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-5-5',
+        max_tokens: 4000,
+        fallbacks: 'default',
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } },
+          { type: 'text', text: prompt },
+        ] }],
+      }),
+    });
+  } catch (e) {
+    throw { code: signal.aborted ? 'cancelled' : 'network' };
+  }
+  const j = await r.json().catch(() => null);
+  if (!r.ok) {
+    const code = r.status === 401 || r.status === 403 ? 'bad_key' : r.status === 429 ? 'rate_limited' : r.status >= 500 ? 'upstream_error' : 'api_error';
+    throw { code, message: (j && j.error && j.error.message) || `HTTP ${r.status}` };
+  }
+  if (j.stop_reason === 'refusal') throw { code: 'refused' };
+  const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  if (!text) throw { code: 'empty_completion' };
+  return parseLooseJson(text);
+}
+
+const CAP_ERRORS = {
+  cancelled: 'Stopped.',
+  not_granted: 'Claude wasn’t allowed for this page. You can allow it from the page’s Permissions menu, then reload.',
+  sampling_disabled: 'Claude isn’t available for this account.',
+  capability_disabled: 'Claude isn’t available in this view.',
+  images_unavailable: 'This view can’t send photos to Claude.',
+  image_rejected: 'Claude couldn’t read this image file. Try a JPG or PNG.',
+  rate_limited: 'Too many requests right now. Wait a minute and try again.',
+  session_expired: 'Your claude.ai session expired. Sign in again and reload.',
+  refused: 'Claude declined to caption this photo.',
+  invalid_json: 'The caption came back in an unexpected form. Try again.',
+  empty_completion: 'Claude returned an empty answer. Try again.',
+  bad_key: 'That API key was rejected. Check it and try again.',
+  network: 'Couldn’t reach the Claude API. Check your connection and try again.',
+  upstream_error: 'The Claude service had a problem. Try again in a moment.',
+};
+
+async function writeCaption() {
+  if (!current.file || !capMode) return;
+  const status = $('capStatus'), go = $('capGo'), stop = $('capStop');
+  let key = null;
+  if (capMode === 'api') {
+    key = $('capKey').value.trim();
+    if (!key) { status.textContent = 'Paste your Anthropic API key first.'; $('capKey').focus(); return; }
+    store.set('cf.apiKey', $('capRemember').checked ? key : null);
+  }
+  store.set('cf.photographer', $('capWho').value.trim() || null);
+  const ctl = capCtl = new AbortController();
+  go.disabled = true; stop.hidden = false;
+  status.textContent = 'Writing caption… This can take up to a minute.';
+  const file = current.file;
+  try {
+    const prompt = captionPrompt();
+    const jpeg = await photoJpeg(file);
+    const out = capMode === 'claude'
+      ? await sampleFn.json(prompt, { images: jpeg, signal: ctl.signal, cache: false })
+      : await captionViaApi(key, prompt, jpeg, ctl.signal);
+    if (file !== current.file) return;
+    const caption = out && typeof out.caption === 'string' ? out.caption.trim() : '';
+    if (!caption) throw { code: 'invalid_json' };
+    $('capText').value = caption;
+    const ul = $('capCheck'); ul.innerHTML = '';
+    for (const item of (Array.isArray(out.check) ? out.check : []).slice(0, 6)) {
+      const li = document.createElement('li'); li.textContent = String(item); ul.appendChild(li);
+    }
+    $('capCheckHead').hidden = !ul.children.length;
+    $('capOut').hidden = false;
+    status.textContent = '';
+    go.textContent = 'Write another version';
+  } catch (e) {
+    if (file !== current.file) return;
+    const code = e && e.code;
+    status.textContent = CAP_ERRORS[code] || `Couldn’t write the caption${e && e.message ? ': ' + e.message : '.'}`;
+    if (['not_granted', 'sampling_disabled', 'capability_disabled', 'images_unavailable'].includes(code)) go.hidden = true;
+  } finally {
+    if (capCtl === ctl) { stop.hidden = true; go.disabled = !current.file; capCtl = null; }
+  }
+}
+
+function resetCaption() {
+  if (capCtl) { capCtl.abort(); capCtl = null; }
+  $('capOut').hidden = true; $('capText').value = ''; $('capCheck').innerHTML = '';
+  if (capMode) $('capStatus').textContent = '';
+  $('capStop').hidden = true;
+  $('capGo').textContent = 'Write caption';
+  $('capGo').disabled = !capMode;
+}
+
+function setupCaption() {
+  const saved = store.get('cf.photographer'); if (saved) $('capWho').value = saved;
+  const key = store.get('cf.apiKey'); if (key) { $('capKey').value = key; $('capRemember').checked = true; }
+  $('capGo').addEventListener('click', writeCaption);
+  $('capStop').addEventListener('click', () => { if (capCtl) capCtl.abort(); });
+  $('capRemember').addEventListener('change', () => { if (!$('capRemember').checked) store.set('cf.apiKey', null); });
+  $('capCopy').addEventListener('click', e => {
+    const btn = e.currentTarget, text = $('capText').value;
+    const done = ok => {
+      btn.textContent = ok ? 'Copied' : 'Press Ctrl+C to copy';
+      if (!ok) $('capText').select();
+      setTimeout(() => { btn.textContent = 'Copy caption'; }, 1800);
+    };
+    try { navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); } catch { done(false); }
+  });
+  $('capMode').textContent = 'Connecting…';
+  const useApi = () => {
+    capMode = 'api'; $('capKeyRow').hidden = false;
+    $('capMode').textContent = 'Uses your Anthropic API key';
+    $('capGo').disabled = !current.file;
+  };
+  if (!(window.claude && typeof window.claude.use === 'function')) { useApi(); return; }
+  // Inside claude.ai the page can't call other sites, so there is no API-key fallback there.
+  const unavailable = () => {
+    $('capMode').textContent = 'Unavailable here';
+    $('capGo').hidden = true;
+    $('capStatus').textContent = 'Writing captions needs Claude, which this view can’t reach. Open the page in claude.ai while signed in.';
+  };
+  window.claude.use('sample').then(async fn => {
+    const lim = fn && await fn.limits().catch(() => null);
+    if (!fn || !lim || !lim.images) { unavailable(); return; }
+    sampleFn = fn; capMode = 'claude';
+    $('capMode').textContent = 'Uses your Claude account';
+    $('capGo').disabled = !current.file;
+  }, unavailable);
 }
 
 function loadFile(file) {
@@ -1323,6 +1595,8 @@ function loadFile(file) {
   if (!file || !file.type.startsWith('image/')) { showError('That file doesn’t look like an image.'); return; }
   const url = URL.createObjectURL(file);
   const token = ++locToken;
+  current.file = file; current.info = null; current.place = null; current.country = null;
+  resetCaption();
   $('locPlace').textContent = '';
   $('locBody').innerHTML = '<p class="loc-empty">Reading location data…</p>';
   file.arrayBuffer().then(readExif).catch(() => null).then(info => {
@@ -1368,6 +1642,7 @@ document.addEventListener('paste', e => {
 });
 ['tGuide', 'tSubject', 'tLines', 'tHeat'].forEach(id => $(id).addEventListener('change', render));
 new ResizeObserver(render).observe(photo);
+setupCaption();
 
 window.__analyzeComposition = analyze; // exposed for testing
 })();
